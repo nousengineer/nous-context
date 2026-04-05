@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useMutation, gql } from '@apollo/client';
 import ContextEntryList from './ContextEntryList';
 import DecisionList from './DecisionList';
@@ -90,7 +90,9 @@ export default function ProjectDetail({ projectId }: ProjectDetailProps) {
           </div>
           <DeleteButton
             itemName={project.name}
-            onDelete={() => deleteProject({ variables: { id: project.id } })}
+            onDelete={async () => {
+              await deleteProject({ variables: { id: project.id } });
+            }}
             variant="danger"
           />
         </div>

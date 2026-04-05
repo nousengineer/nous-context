@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { ApolloClient, InMemoryCache, ApolloProvider, HttpLink } from '@apollo/client';
 
 const client = new ApolloClient({

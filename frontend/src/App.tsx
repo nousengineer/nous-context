@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation, gql } from '@apollo/client';
+import { useState } from 'react';
+import { useQuery, gql } from '@apollo/client';
 import ProjectList from './components/ProjectList';
 import ProjectDetail from './components/ProjectDetail';
 import CreateProjectForm from './components/CreateProjectForm';

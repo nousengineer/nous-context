@@ -1,5 +1,5 @@
-import React from 'react';
-import { Project, ContextEntry, Decision } from '../types';
+import { useState } from 'react';
+import { Project, ContextEntry, Decision } from '../../../shared/types';
 
 interface ContextExportProps {
   project: Project;
@@ -20,8 +20,8 @@ const slugify = (text: string): string => {
 };
 
 export default function ContextExport({ project, contextEntries, decisions }: ContextExportProps) {
-  const [format, setFormat] = React.useState<ExportFormat>('markdown');
-  const [copied, setCopied] = React.useState(false);
+  const [format, setFormat] = useState<ExportFormat>('markdown');
+  const [copied, setCopied] = useState(false);
 
   const generateJSON = () => {
     const data = {
@@ -53,9 +53,9 @@ export default function ContextExport({ project, contextEntries, decisions }: Co
       lines.push(`\n${project.description}\n`);
     }
 
-    if (contextEntries.length > 0) {
+    if ((contextEntries as ContextEntry[]).length > 0) {
       lines.push('\n## Context Entries\n');
-      const byCategory = contextEntries.reduce((acc, e) => {
+      const byCategory = (contextEntries as ContextEntry[]).reduce((acc, e) => {
         if (!acc[e.category]) acc[e.category] = [];
         acc[e.category].push(e);
         return acc;
@@ -71,9 +71,9 @@ export default function ContextExport({ project, contextEntries, decisions }: Co
       }
     }
 
-    if (decisions.length > 0) {
+    if ((decisions as Decision[]).length > 0) {
       lines.push('\n## Architectural Decisions\n');
-      for (const decision of decisions) {
+      for (const decision of decisions as Decision[]) {
         lines.push(`### ${decision.title}`);
         lines.push(`- **Status**: ${decision.status}`);
         lines.push(`- **Description**: ${decision.description}\n`);

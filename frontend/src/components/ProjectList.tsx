@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { useMutation, gql } from '@apollo/client';
 import DeleteButton from './DeleteButton';
 
