@@ -85,6 +85,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'changeMode': this._changeMode(msg.mode); break;
         case 'setAutoApprove': this._autoApprove = !!msg.enabled; break;
         case 'switchPipeline': this._switchToPipeline(msg.pipelineId); break;
+        case 'retryPipeline': this._retryPipelineById(msg.pipelineId); break;
         case 'backToList': this._backToList(); break;
         case 'newPipeline': this._promptNewPipeline(); break;
       }
@@ -110,37 +111,42 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const project = this._getProject();
     if (!project || !this._agentService) return;
 
+    // First try to resume active (interrupted) pipelines
     const active = this._pipelines.getActive(project.id);
-    if (!active) return;
+    if (active) {
+      const currentPhase = active.phases[active.currentPhase];
+      if (currentPhase) {
+        this._switchToPipeline(active.id);
 
-    const currentPhase = active.phases[active.currentPhase];
-    if (!currentPhase) return;
+        if (!this._agentService.isPipelineLoopActive(active.id)) {
+          if (currentPhase.status === 'in-progress') {
+            this._pipelines.resetStaleTasks(project.id, active.id);
+          }
 
-    // Switch to the active pipeline chat
-    this._switchToPipeline(active.id);
+          this._activeChat.send({
+            sender: 'system',
+            senderLabel: 'Pipeline',
+            content: `Retomando pipeline: **${active.objective}**\nFase atual: **${currentPhase.name}** (${currentPhase.status})`,
+            type: 'info',
+          });
 
-    // If PM loop is already running, skip
-    if (this._agentService.isPipelineLoopActive(active.id)) return;
+          const config = loadAgentConfig();
+          if (config.mode === 'auto' || isQualityPreset(config.mode)) {
+            await this._agentService.autoAssignModels(active);
+          }
 
-    // Reset stale tasks if phase was interrupted mid-execution
-    if (currentPhase.status === 'in-progress') {
-      this._pipelines.resetStaleTasks(project.id, active.id);
+          this._agentService.runPipeline(project.id, active.id);
+        }
+      }
+      return; // Active pipeline takes priority
     }
 
-    this._activeChat.send({
-      sender: 'system',
-      senderLabel: 'Pipeline',
-      content: `Retomando pipeline: **${active.objective}**\nFase atual: **${currentPhase.name}** (${currentPhase.status})`,
-      type: 'info',
-    });
-
-    const config = loadAgentConfig();
-    if (config.mode === 'auto' || isQualityPreset(config.mode)) {
-      await this._agentService.autoAssignModels(active);
+    // Then resume failed pipelines
+    const failed = this._pipelines.getFailed(project.id);
+    for (const pipeline of failed) {
+      if (this._agentService.isPipelineLoopActive(pipeline.id)) continue;
+      await this._resumeAndRunPipeline(project.id, pipeline);
     }
-
-    // Start PM oversight loop — PM will handle everything from here
-    this._agentService.runPipeline(project.id, active.id);
   }
 
   /** Expose active chat for AgentService to write to */
@@ -334,7 +340,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     if (!trimmed) return;
 
     // Agent @mentions: @product-manager, @architect, @backend, etc.
-    const agentRoles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+    const agentRoles: AgentRole[] = ['product-manager', 'architect', 'organizer', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
     const agentMatch = trimmed.match(/^@([\w-]+)\s+([\s\S]+)/);
     if (agentMatch) {
       const target = agentMatch[1];
@@ -357,7 +363,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       }
       // Also support short names: @pm, @ar, @be, @fe, @do, @qa, @cr
       const shortMap: Record<string, AgentRole> = {
-        pm: 'product-manager', ar: 'architect', be: 'backend',
+        pm: 'product-manager', ar: 'architect', og: 'organizer', be: 'backend',
         fe: 'frontend', do: 'devops', qa: 'qa', cr: 'code-review',
       };
       if (shortMap[target]) {
@@ -392,6 +398,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       this._showPipelineStatus();
     } else if (trimmed === '/run') {
       this._runCurrentPhase();
+    } else if (trimmed === '/retry') {
+      this._retryFailedPipeline();
     } else if (trimmed === '/stop') {
       this._stopAllAgents();
     } else if (trimmed === '/models') {
@@ -430,6 +438,64 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this._agentService.runPhase(project.id, active.id);
   }
 
+  private async _retryFailedPipeline() {
+    const project = this._getProject();
+    if (!project) { this._systemMsg('Nenhum projeto ativo.', 'error'); return; }
+    if (!this._agentService) { this._systemMsg('AgentService nao inicializado.', 'error'); return; }
+
+    // If viewing a specific failed pipeline, retry that one
+    if (this._activePipelineId) {
+      const pipeline = this._pipelines.get(project.id, this._activePipelineId);
+      if (pipeline && pipeline.status === 'failed') {
+        await this._resumeAndRunPipeline(project.id, pipeline);
+        return;
+      }
+    }
+
+    // Otherwise find any failed pipeline
+    const failed = this._pipelines.getFailed(project.id);
+    if (failed.length === 0) {
+      this._systemMsg('Nenhuma pipeline falhou. Nada para retomar.', 'info');
+      return;
+    }
+
+    // Retry the most recent failed pipeline
+    const target = failed.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+    await this._resumeAndRunPipeline(project.id, target);
+  }
+
+  private async _retryPipelineById(pipelineId: string) {
+    const project = this._getProject();
+    if (!project) { this._systemMsg('Nenhum projeto ativo.', 'error'); return; }
+    if (!this._agentService) { this._systemMsg('AgentService nao inicializado.', 'error'); return; }
+    const pipeline = this._pipelines.get(project.id, pipelineId);
+    if (!pipeline) { this._systemMsg('Pipeline nao encontrada.', 'error'); return; }
+    if (pipeline.status !== 'failed') { this._systemMsg('Pipeline nao esta em estado de falha.', 'info'); return; }
+    await this._resumeAndRunPipeline(project.id, pipeline);
+  }
+
+  private async _resumeAndRunPipeline(projectId: string, pipeline: Pipeline) {
+    const resumed = this._pipelines.resumeFailed(projectId, pipeline.id);
+    if (!resumed) { this._systemMsg('Falha ao retomar pipeline.', 'error'); return; }
+
+    this._switchToPipeline(resumed.id);
+
+    const phase = resumed.phases[resumed.currentPhase];
+    this._activeChat.send({
+      sender: 'system',
+      senderLabel: 'Pipeline',
+      content: `Retomando pipeline: **${resumed.objective}**\nFase: **${phase?.name || '?'}** — tasks resetadas para re-execucao.`,
+      type: 'info',
+    });
+
+    const config = loadAgentConfig();
+    if (config.mode === 'auto' || isQualityPreset(config.mode)) {
+      await this._agentService!.autoAssignModels(resumed);
+    }
+
+    this._agentService!.runPipeline(projectId, resumed.id);
+  }
+
   private _stopAllAgents() {
     if (!this._agentService) return;
     this._agentService.stopAll();
@@ -438,7 +504,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private _showModels() {
     const config = loadAgentConfig();
-    const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+    const roles: AgentRole[] = ['product-manager', 'architect', 'organizer', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
     const lines = roles.map(r => {
       const model = config.models[r] || DEFAULT_AGENT_MODELS[r];
       const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
@@ -1228,6 +1294,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .pl-status.completed { background: #22c55e22; color: #22c55e; }
   .pl-status.failed { background: #ef444422; color: #ef4444; }
   .pl-status.active { background: #3b82f622; color: #3b82f6; }
+  .pl-retry-btn {
+    margin-left: auto;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid #f97316;
+    color: #f97316;
+    background: #f9731611;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .pl-retry-btn:hover { background: #f9731633; }
   .pl-card .pl-progress {
     display: flex;
     height: 3px;
@@ -1321,12 +1399,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="hints">
       <strong>/pipeline</strong> create &bull;
       <strong>/run</strong> start &bull;
+      <strong>/retry</strong> resume &bull;
       <strong>/approve</strong> &bull;
       <strong>/reject</strong> &bull;
       <strong>/models</strong> &bull;
       <strong>/agents</strong> &bull;
       <strong>/stop</strong> &bull;
-      <strong>@pm</strong> <strong>@ar</strong> <strong>@be</strong> <strong>@fe</strong> <strong>@qa</strong> <strong>@cr</strong>
+      <strong>@pm</strong> <strong>@ar</strong> <strong>@og</strong> <strong>@be</strong> <strong>@fe</strong> <strong>@qa</strong> <strong>@cr</strong>
     </div>
     <div class="mode-bar" id="modeBar">
       <label>Modo:</label>
@@ -1425,16 +1504,32 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         agentChipsHtml = '<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap;">' + chips + '</div>';
       }
 
+      // Retry button for failed pipelines
+      let retryHtml = '';
+      if (p.status === 'failed') {
+        retryHtml = '<button class="pl-retry-btn" data-pid="' + p.id + '" title="Retomar pipeline">Retomar</button>';
+      }
+
       card.innerHTML =
         '<div class="pl-objective">' + escHtml(p.objective) + '</div>' +
         '<div class="pl-meta">' +
           '<span class="pl-status ' + statusClass + '">' + statusLabel + '</span>' +
           '<span>' + p.completedPhases + '/' + p.totalPhases + ' fases</span>' +
           '<span>' + date + '</span>' +
+          retryHtml +
         '</div>' +
         progressHtml +
         agentChipsHtml;
       pipelineCards.appendChild(card);
+
+      // Attach retry click handler (stop propagation so card click doesn't fire)
+      const retryBtn = card.querySelector('.pl-retry-btn');
+      if (retryBtn) {
+        retryBtn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          vscode.postMessage({ command: 'retryPipeline', pipelineId: p.id });
+        });
+      }
     }
   }
 
@@ -1470,6 +1565,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     'devops': '#fb923c',
     'qa': '#facc15',
     'code-review': '#c084fc',
+    'organizer': '#f59e0b',
     'system': '#9ca3af',
     'github-cli': '#22c55e',
     'terminal': '#eab308',
@@ -1484,6 +1580,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     'devops': 'DO',
     'qa': 'QA',
     'code-review': 'CR',
+    'organizer': 'OG',
     'system': 'S',
     'github-cli': 'GH',
     'terminal': 'T',

@@ -31,6 +31,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
     models: {
       'product-manager': 'claude-sonnet-4',    // Melhor raciocinio free pra PM
       'architect': 'gpt-4o',                   // Bom raciocinio geral, free
+      'organizer': 'gpt-4.1',                  // Organiza projeto, free
       'backend': 'grok-code-fast-1',           // Code-specialized, free
       'frontend': 'gpt-4.1',                   // Bom geral, free
       'devops': 'gpt-5.4-mini',               // Mini capaz
@@ -57,6 +58,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
     models: {
       'product-manager': 'claude-sonnet-4.6',  // 1x — melhor PM no tier mid
       'architect': 'gemini-2.5-pro',            // 1x — contexto longo, design
+      'organizer': 'claude-sonnet-4.5',         // 0.5x — organiza estrutura
       'backend': 'gpt-5.3-codex',              // 1x — melhor code
       'frontend': 'gpt-5.2-codex',             // 0.5x — code pra UI
       'devops': 'claude-sonnet-4.5',           // 0.5x — equilibrado
@@ -81,6 +83,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
     models: {
       'product-manager': 'claude-opus-4.6',    // 3x — melhor raciocinio
       'architect': 'gemini-3.1-pro',            // 3x — melhor pra arquitetura
+      'organizer': 'claude-opus-4.5',           // 3x — reestrutura com precisao
       'backend': 'gpt-5.4',                     // 3x — mais capaz
       'frontend': 'claude-opus-4.5',            // 3x — raciocinio profundo UI
       'devops': 'claude-opus-4.5',             // 3x — infra critica
@@ -160,6 +163,7 @@ export type ModelFamily = typeof AVAILABLE_MODELS[number]['family'];
 export const DEFAULT_AGENT_MODELS: Record<AgentRole, string> = {
   'product-manager': 'claude-opus-4.6',
   'architect': 'gemini-3.1-pro',
+  'organizer': 'claude-opus-4.5',
   'backend': 'gpt-5.4',
   'frontend': 'claude-opus-4.5',
   'devops': 'claude-opus-4.5',

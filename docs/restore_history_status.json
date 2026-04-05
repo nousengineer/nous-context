@@ -1,0 +1,6 @@
+{
+  "project": "thinkcoffee",
+  "task": "Restaurar interface do histórico",
+  "status": "completed",
+  "notes": "A interface de persistência de chat foi verificada e está funcional via PipelineChatHistoryService.ts e ChatHistoryView.ts. O teste base passou sem erros."
+}

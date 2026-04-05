@@ -5,13 +5,15 @@ export { getDatabase, closeDatabase } from './database';
 export type { DatabaseOptions } from './database';
 
 // Entities
-export { Project, ContextEntry, Decision, ApiKey, SyncConfig } from './entities';
+export { Project, ContextEntry, Decision, ApiKey, SyncConfig, ChatHistory } from './entities';
 export type { SyncTarget, SyncTrigger } from './entities/SyncConfig';
+export type { ChatMessage } from './entities/ChatHistory';
 
 // Services
-export { ProjectService, ContextService, DecisionService, ApiKeyService, SyncConfigService, AutoSyncService } from './services';
+export { ProjectService, ContextService, DecisionService, ApiKeyService, SyncConfigService, AutoSyncService, ChatHistoryService } from './services';
 export type { CreateSyncConfigInput, UpdateSyncConfigInput, SyncResult } from './services/SyncConfigService';
 export type { AutoSyncStatus } from './services/AutoSyncService';
+export type { SaveHistoryInput, HistoryFilter, BackupInfo, RecoveryResult } from './services/ChatHistoryService';
 
 // Export
 export { exportProject, getExportFilename } from './export';
@@ -25,7 +27,6 @@ export { CryptoUtils } from './utils/crypto';
 
 // Chat
 export { ChatService } from './chat';
-export type { ChatMessage } from './chat';
 
 // Pipeline
 export { PipelineService, AGENT_META } from './pipeline';

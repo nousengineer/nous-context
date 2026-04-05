@@ -19,10 +19,13 @@ import {
 } from '@thinkcoffee/core';
 import type { Project, AgentRole, QualityPreset } from '@thinkcoffee/core';
 import { ChatViewProvider } from './chat/ChatViewProvider';
+import { ChatHistoryView } from './chat/ChatHistoryView';
 import { AgentService } from './agents/AgentService';
 import { discoverModels } from './agents/ModelRegistry';
 import fs from 'fs';
 import path from 'path';
+import { getPipelineChatHistoryService } from './chat/PipelineChatHistoryService';
+import { ChatPanel } from './chat/ChatPanel';
 
 let projectService: ProjectService;
 let contextService: ContextService;
@@ -120,6 +123,13 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     })
+  );
+
+  // --- Chat History View ---
+  const chatHistoryView = new ChatHistoryView();
+  vscode.window.createTreeView('thinkcoffee-history', { treeDataProvider: chatHistoryView });
+  context.subscriptions.push(
+    vscode.commands.registerCommand('thinkcoffee.history.refresh', () => chatHistoryView.refresh())
   );
 
   // ─── Agent Service ───────────────────────────────────────────
@@ -363,6 +373,17 @@ export async function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('thinkcoffee.chat.focus');
     }),
 
+    // --- Open Pipeline Chat History ---
+    vscode.commands.registerCommand('thinkcoffee.openPipelineChat', (pipelineId: string) => {
+      if (!pipelineId) {
+        vscode.window.showWarningMessage('ID do Pipeline não fornecido.');
+        return;
+      }
+      const historyService = getPipelineChatHistoryService();
+      const chatService = historyService.getChatForPipeline(pipelineId);
+      ChatPanel.create(context.extensionUri, chatService);
+    }),
+
     // ─── Context commands (kept for editor/explorer menus) ───
     vscode.commands.registerCommand('thinkcoffee.openContextFile', async () => {
       // No-op without tree items — context is in the chat now
@@ -384,6 +405,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const p = pipelineService.create(project.id, objective, ws);
       vscode.window.showInformationMessage(`Pipeline created: ${p.objective}`);
       chatProvider.refresh();
+      chatHistoryView.refresh();
     }),
 
     // ─── Pipeline: Approve Phase ─────────────────────────────
@@ -413,7 +435,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const feedback = await vscode.window.showInputBox({
         prompt: 'Feedback for the agents (what needs to change)',
-        placeHolder: 'Explain what needs improvement...',
+        placeHolder: 'Explain what needs to improvement...',
       });
       if (!feedback) return;
 
@@ -487,160 +509,52 @@ export async function activate(context: vscode.ExtensionContext) {
       // Quality preset
       if (modeChoice.value in QUALITY_PRESETS) {
         const preset = modeChoice.value as QualityPreset;
-        const applied = applyQualityPreset(preset);
-        const p = QUALITY_PRESETS[preset];
-
-        const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
-        const lines = roles.map(r => {
-          const model = applied.models[r];
-          const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
-          return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
-        });
-
-        chat.send({
-          sender: 'system',
-          senderLabel: 'Config',
-          content: `**${p.label}** — ${p.subtitle}\n\n${p.description}\n\n${lines.join('\n')}`,
-          type: 'info',
-        });
-        chatProvider.refresh();
-        vscode.window.showInformationMessage(`Modo "${p.label}" ativado.`);
+        applyQualityPreset(preset);
+        vscode.window.showInformationMessage(`Qualidade definida para: ${QUALITY_PRESETS[preset].label}`);
         return;
       }
 
       // Auto mode
       if (modeChoice.value === 'auto') {
-        config.mode = 'auto';
+        config.autoAssignModels = true;
         saveAgentConfig(config);
-
-        const project = activeProject;
-        if (project) {
-          const pipeline = pipelineService.getActive(project.id);
-          if (pipeline) {
-            await agentService.autoAssignModels(pipeline);
-          } else {
-            vscode.window.showInformationMessage(
-              'Modo auto ativado. O PM atribuira modelos quando um pipeline for criado.'
-            );
-          }
-        }
-        chatProvider.refresh();
+        vscode.window.showInformationMessage('Modo automatico ativado. O PM ira atribuir os modelos.');
         return;
       }
 
-      // Manual mode — let user pick model for each agent
-      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+      // Manual mode
+      config.autoAssignModels = false;
+      saveAgentConfig(config);
 
-      for (const role of roles) {
-        if (role === 'product-manager') continue; // Always opus
-
-        const currentModel = config.models[role] || DEFAULT_AGENT_MODELS[role];
-        const dynamicModels = await discoverModels();
-        const items = dynamicModels.map(m => ({
-          label: m.label,
-          description: `${m.family} (${m.tier})`,
-          picked: m.family === currentModel,
-          family: m.family,
-        }));
-
-        const pick = await vscode.window.showQuickPick(items, {
-          placeHolder: `Modelo para ${AGENT_META[role].label} (atual: ${currentModel})`,
-        });
-        if (!pick) continue;
-
-        setAgentModel(role, pick.family);
-      }
-
-      chatProvider.refresh();
-      vscode.window.showInformationMessage('Modelos dos agentes configurados.');
-    }),
-
-    // ─── Run Current Phase ───────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.runPhase', async () => {
-      const project = await getProject();
-      if (!project) return;
-
-      const active = pipelineService.getActive(project.id);
-      if (!active) {
-        vscode.window.showWarningMessage('Nenhum pipeline ativo.');
-        return;
-      }
-
-      const phase = active.phases[active.currentPhase];
-      if (!phase || phase.status !== 'in-progress') {
-        vscode.window.showWarningMessage('Fase atual nao esta em andamento.');
-        return;
-      }
-
-      // Auto-assign models if in auto mode
-      const config = loadAgentConfig();
-      if (config.mode === 'auto') {
-        await agentService.autoAssignModels(active);
-      }
-
-      agentService.runPhase(project.id, active.id);
-    }),
-
-    // ─── Stop All Agents ─────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.stopAgents', () => {
-      agentService.stopAll();
-      vscode.window.showInformationMessage('Todos os agentes foram parados.');
-      chatProvider.refresh();
-    }),
-
-    // ─── Invoke Single Agent ─────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.invokeAgent', async () => {
-      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
-      const config = loadAgentConfig();
-
-      const pick = await vscode.window.showQuickPick(
-        roles.map(r => ({
-          label: AGENT_META[r].label,
-          description: `${config.models[r] || DEFAULT_AGENT_MODELS[r]}`,
-          detail: AGENT_META[r].description,
-          role: r,
+      const agentRole = await vscode.window.showQuickPick(
+        Object.keys(AGENT_META).map(k => ({
+          label: AGENT_META[k as AgentRole].label,
+          description: k,
+          detail: `Modelo atual: ${config.models[k as AgentRole] || DEFAULT_AGENT_MODELS[k as AgentRole]}`,
+          role: k as AgentRole,
         })),
-        { placeHolder: 'Qual agente invocar?' }
+        { placeHolder: 'Selecione o agente para configurar' }
       );
-      if (!pick) return;
+      if (!agentRole) return;
 
-      const message = await vscode.window.showInputBox({
-        prompt: `Mensagem para ${pick.label}`,
-        placeHolder: 'O que voce precisa que esse agente faca...',
-      });
-      if (!message) return;
+      const availableModels = await discoverModels();
+      if (!availableModels.length) {
+        vscode.window.showErrorMessage('Nenhum modelo de IA encontrado. Verifique a integracao com Claude, Ollama, etc.');
+        return;
+      }
 
-      chat.send({
-        sender: 'programmer',
-        senderLabel: 'You',
-        content: `@${pick.role} ${message}`,
-        type: 'request',
-        mentions: [pick.role],
-      });
-      chatProvider.refresh();
-      agentService.invokeAgent(chatProvider.getActivePipelineId() || '', pick.role, message);
-    }),
+      const modelId = await vscode.window.showQuickPick(
+        availableModels.map(m => ({ label: m.name, description: m.id, detail: `${m.provider} - ${m.family}` })),
+        { placeHolder: `Selecione o modelo para ${agentRole.label}` }
+      );
+      if (!modelId) return;
 
-    // ─── View Agent Models ───────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.viewAgentModels', () => {
-      const config = loadAgentConfig();
-      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
-      const lines = roles.map(r => {
-        const model = config.models[r] || DEFAULT_AGENT_MODELS[r];
-        const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
-        return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
-      });
-      const presetLabel = (QUALITY_PRESETS as any)[config.mode]?.label;
-      const modeLabel = presetLabel ? `**${presetLabel}** (${config.mode})` : `**${config.mode}**`;
-      chat.send({
-        sender: 'system',
-        senderLabel: 'Config',
-        content: `Modo: ${modeLabel}\n\n${lines.join('\n')}`,
-        type: 'info',
-      });
-      chatProvider.refresh();
-    }),
+      setAgentModel(agentRole.role, modelId.description!);
+      vscode.window.showInformationMessage(`Modelo para ${agentRole.label} definido como: ${modelId.label}`);
+    })
   );
 }
 
-export function deactivate() {}
+export function deactivate() {
+  if (agentService) agentService.dispose();
+}

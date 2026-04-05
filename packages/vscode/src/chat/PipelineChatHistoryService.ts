@@ -6,22 +6,33 @@ import os from 'os';
 
 /**
  * PipelineChatHistoryService
- * Gerencia o histórico de chat para cada pipeline
- * Oferece persistência, recuperação e sincronização
+ * 
+ * Gerencia o historico de chat para cada pipeline.
+ * Oferece persistencia, recuperacao, backup e sincronizacao.
+ * 
+ * Armazena dados em: ~/.thinkcoffee/pipeline-chat/
  */
 export class PipelineChatHistoryService {
   private _chats = new Map<string, ChatService>();
   private _historyDir: string;
+  private _watchers = new Map<string, () => void>();
 
   constructor() {
     this._historyDir = path.join(os.homedir(), '.thinkcoffee', 'pipeline-chat');
-    if (!fs.existsSync(this._historyDir)) {
-      fs.mkdirSync(this._historyDir, { recursive: true });
+    this._ensureDirectory(this._historyDir);
+  }
+
+  /**
+   * Garante que o diretorio existe
+   */
+  private _ensureDirectory(dir: string): void {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
   }
 
   /**
-   * Obtém ou cria um ChatService para um pipeline específico
+   * Obtem ou cria um ChatService para um pipeline especifico
    */
   getChatForPipeline(pipelineId: string): ChatService {
     if (this._chats.has(pipelineId)) {
@@ -34,88 +45,176 @@ export class PipelineChatHistoryService {
   }
 
   /**
-   * Salva o histórico de um pipeline em um arquivo de backup
+   * Verifica se existe historico para um pipeline
+   */
+  hasPipelineHistory(pipelineId: string): boolean {
+    const chat = this.getChatForPipeline(pipelineId);
+    return chat.getHistory().length > 0;
+  }
+
+  /**
+   * Obtem o historico de um pipeline
+   */
+  getPipelineHistory(pipelineId: string, limit?: number): ChatMessage[] {
+    const chat = this.getChatForPipeline(pipelineId);
+    return chat.getHistory(limit);
+  }
+
+  /**
+   * Adiciona uma mensagem ao historico de um pipeline
+   */
+  addMessage(pipelineId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>): ChatMessage {
+    const chat = this.getChatForPipeline(pipelineId);
+    return chat.send(message);
+  }
+
+  /**
+   * Limpa o historico de um pipeline
+   */
+  clearPipelineHistory(pipelineId: string): void {
+    const chat = this.getChatForPipeline(pipelineId);
+    chat.clear();
+  }
+
+  /**
+   * Salva o historico de um pipeline em um arquivo de backup
+   * Retorna o caminho do arquivo criado
    */
   backupPipelineHistory(pipelineId: string): string {
     const chat = this.getChatForPipeline(pipelineId);
     const history = chat.getHistory();
-    
+
+    if (history.length === 0) {
+      throw new Error('Nenhuma mensagem para fazer backup');
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const backupFile = path.join(
       this._historyDir,
-      `backup_${pipelineId}_${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
+      `backup_${pipelineId}_${timestamp}.jsonl`
     );
 
-    const content = history
-      .map(m => JSON.stringify(m))
-      .join('\n');
-
+    const content = history.map(m => JSON.stringify(m)).join('\n');
     fs.writeFileSync(backupFile, content, 'utf-8');
+
     return backupFile;
   }
 
   /**
-   * Restaura histórico de um arquivo de backup
+   * Restaura historico de um arquivo de backup
    */
   restorePipelineHistory(pipelineId: string, backupFile: string): void {
     if (!fs.existsSync(backupFile)) {
-      throw new Error(`Arquivo de backup não encontrado: ${backupFile}`);
+      throw new Error(`Arquivo de backup nao encontrado: ${backupFile}`);
     }
 
     const chat = this.getChatForPipeline(pipelineId);
     const content = fs.readFileSync(backupFile, 'utf-8').trim();
-    
-    if (!content) return;
+
+    if (!content) {
+      throw new Error('Arquivo de backup esta vazio');
+    }
 
     const messages: ChatMessage[] = [];
-    content.split('\n').forEach((line, i) => {
+    const lines = content.split('\n');
+
+    lines.forEach((line, i) => {
       if (!line.trim()) return;
       try {
         messages.push(JSON.parse(line) as ChatMessage);
       } catch (err) {
-        console.error(`Erro ao restaurar linha ${i + 1}: ${err}`);
+        console.error(`[PipelineChatHistoryService] Erro ao restaurar linha ${i + 1}: ${err}`);
       }
     });
+
+    if (messages.length === 0) {
+      throw new Error('Nenhuma mensagem valida encontrada no backup');
+    }
+
+    // Faz backup do atual antes de sobrescrever
+    const currentHistory = chat.getHistory();
+    if (currentHistory.length > 0) {
+      try {
+        this.backupPipelineHistory(pipelineId);
+      } catch {
+        // Ignora se falhar (historico vazio)
+      }
+    }
 
     // Limpar e restaurar
     chat.clear();
     messages.forEach(m => {
-      // Recriar mensagem sem usar send (que geraria novo id e timestamp)
-      const filePath = chat.getFilePath();
-      fs.appendFileSync(filePath, JSON.stringify(m) + '\n', 'utf-8');
+      chat.addMessageDirectly(m);
     });
   }
 
   /**
-   * Lista todos os backups disponíveis para um pipeline
+   * Lista todos os backups disponiveis para um pipeline
    */
   listBackups(pipelineId: string): Array<{ file: string; path: string; timestamp: string }> {
+    if (!fs.existsSync(this._historyDir)) {
+      return [];
+    }
+
     const files = fs.readdirSync(this._historyDir);
     const pattern = new RegExp(`^backup_${pipelineId}_`);
-    
+
     return files
       .filter(f => pattern.test(f))
-      .map(f => ({
-        file: f,
-        path: path.join(this._historyDir, f),
-        timestamp: f.match(/_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/)?.[1] || 'unknown',
-      }))
+      .map(f => {
+        const match = f.match(/_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})/);
+        return {
+          file: f,
+          path: path.join(this._historyDir, f),
+          timestamp: match ? match[1] : 'unknown',
+        };
+      })
       .sort((a, b) => b.file.localeCompare(a.file));
+  }
+
+  /**
+   * Lista todos os pipelines com backups
+   */
+  listAllPipelinesWithBackups(): string[] {
+    if (!fs.existsSync(this._historyDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(this._historyDir);
+    const pipelineIds = new Set<string>();
+
+    files.forEach(f => {
+      const match = f.match(/^backup_([^_]+)_/);
+      if (match) {
+        pipelineIds.add(match[1]);
+      }
+    });
+
+    return Array.from(pipelineIds);
   }
 
   /**
    * Deleta backups antigos (mais de `daysOld` dias)
    */
   cleanupOldBackups(daysOld: number = 30): number {
+    if (!fs.existsSync(this._historyDir)) {
+      return 0;
+    }
+
     const files = fs.readdirSync(this._historyDir);
-    const cutoff = Date.now() - (daysOld * 24 * 60 * 60 * 1000);
+    const cutoff = Date.now() - daysOld * 24 * 60 * 60 * 1000;
     let deleted = 0;
 
     files.forEach(f => {
       const fullPath = path.join(this._historyDir, f);
-      const stat = fs.statSync(fullPath);
-      if (stat.mtimeMs < cutoff) {
-        fs.unlinkSync(fullPath);
-        deleted++;
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(fullPath);
+          deleted++;
+        }
+      } catch (err) {
+        console.error(`[PipelineChatHistoryService] Erro ao limpar ${f}: ${err}`);
       }
     });
 
@@ -123,7 +222,7 @@ export class PipelineChatHistoryService {
   }
 
   /**
-   * Exporta histórico de um pipeline em diferentes formatos
+   * Exporta historico de um pipeline em diferentes formatos
    */
   exportHistory(
     pipelineId: string,
@@ -132,59 +231,121 @@ export class PipelineChatHistoryService {
     const chat = this.getChatForPipeline(pipelineId);
     const history = chat.getHistory();
 
-    let content: string;
+    if (history.length === 0) {
+      throw new Error('Nenhuma mensagem para exportar');
+    }
 
     switch (format) {
       case 'jsonl':
-        content = history.map(m => JSON.stringify(m)).join('\n');
-        break;
+        return history.map(m => JSON.stringify(m)).join('\n');
 
-      case 'markdown':
+      case 'markdown': {
         const mdLines = history.map(m => {
           const time = new Date(m.timestamp).toLocaleString('pt-BR');
-          return [
+          const lines = [
             `### ${m.senderLabel || m.sender} (${m.type})`,
             `*${time}*`,
             '',
             m.content,
-          ].join('\n');
+          ];
+          return lines.join('\n');
         });
-        content = mdLines.join('\n\n---\n\n');
-        break;
+        return [
+          `# Historico do Pipeline: ${pipelineId}`,
+          `Exportado em: ${new Date().toLocaleString('pt-BR')}`,
+          `Total de mensagens: ${history.length}`,
+          '',
+          '---',
+          '',
+          mdLines.join('\n\n---\n\n'),
+        ].join('\n');
+      }
 
-      case 'csv':
-        // CSV headers
+      case 'csv': {
         const headers = ['timestamp', 'sender', 'senderLabel', 'type', 'content'];
+        const escapeCSV = (s: string) => `"${(s || '').replace(/"/g, '""')}"`;
         const rows = history.map(m => [
-          `"${m.timestamp}"`,
-          `"${m.sender}"`,
-          `"${m.senderLabel || ''}"`,
-          `"${m.type}"`,
-          `"${m.content.replace(/"/g, '""')}"`,
+          escapeCSV(m.timestamp),
+          escapeCSV(m.sender),
+          escapeCSV(m.senderLabel || ''),
+          escapeCSV(m.type),
+          escapeCSV(m.content),
         ]);
-        content = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-        break;
+        return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      }
 
       default: // json
-        content = JSON.stringify(history, null, 2);
+        return JSON.stringify(
+          {
+            pipelineId,
+            exportedAt: new Date().toISOString(),
+            count: history.length,
+            messages: history,
+          },
+          null,
+          2
+        );
     }
-
-    return content;
   }
 
   /**
-   * Sincroniza histórico entre múltiplos chats (merge com deduplicação por ID)
+   * Importa historico de um arquivo JSON ou JSONL
+   */
+  importHistory(pipelineId: string, content: string, merge: boolean = false): number {
+    const chat = this.getChatForPipeline(pipelineId);
+
+    let messages: ChatMessage[];
+
+    // Detecta formato
+    if (content.trim().startsWith('{')) {
+      // JSON
+      const parsed = JSON.parse(content);
+      messages = parsed.messages || parsed;
+    } else {
+      // JSONL
+      messages = content
+        .trim()
+        .split('\n')
+        .filter(l => l.trim())
+        .map(l => JSON.parse(l));
+    }
+
+    if (!merge) {
+      // Backup e limpa
+      const currentHistory = chat.getHistory();
+      if (currentHistory.length > 0) {
+        this.backupPipelineHistory(pipelineId);
+      }
+      chat.clear();
+    }
+
+    // Adiciona mensagens
+    const existing = new Set(chat.getHistory().map(m => m.id));
+    let added = 0;
+
+    messages.forEach(m => {
+      if (!existing.has(m.id)) {
+        chat.addMessageDirectly(m);
+        added++;
+      }
+    });
+
+    return added;
+  }
+
+  /**
+   * Sincroniza historico entre multiplos chats (merge com deduplicacao por ID)
    */
   syncHistories(pipelineId: string, otherHistories: ChatMessage[][]): ChatMessage[] {
     const chat = this.getChatForPipeline(pipelineId);
     const current = chat.getHistory();
-    
+
     const merged = new Map<string, ChatMessage>();
-    
+
     // Adicionar mensagens atuais
     current.forEach(m => merged.set(m.id, m));
-    
-    // Mesclar com histsórias de outros chats
+
+    // Mesclar com historias de outros chats
     otherHistories.forEach(history => {
       history.forEach(m => {
         if (!merged.has(m.id)) {
@@ -194,15 +355,15 @@ export class PipelineChatHistoryService {
     });
 
     // Ordenar por timestamp
-    const synced = Array.from(merged.values()).sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    const synced = Array.from(merged.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
     return synced;
   }
 
   /**
-   * Obter estatísticas de histórico
+   * Obter estatisticas de historico
    */
   getHistoryStats(pipelineId: string) {
     const chat = this.getChatForPipeline(pipelineId);
@@ -213,10 +374,13 @@ export class PipelineChatHistoryService {
       totalCharacters: history.reduce((sum, m) => sum + m.content.length, 0),
       messagesByType: {} as Record<string, number>,
       messagesBySender: {} as Record<string, number>,
-      dateRange: history.length > 0 ? {
-        oldest: history[0].timestamp,
-        newest: history[history.length - 1].timestamp,
-      } : null,
+      dateRange:
+        history.length > 0
+          ? {
+              oldest: history[0].timestamp,
+              newest: history[history.length - 1].timestamp,
+            }
+          : null,
     };
 
     history.forEach(m => {
@@ -228,21 +392,64 @@ export class PipelineChatHistoryService {
   }
 
   /**
+   * Registra um watcher para mudancas no historico
+   */
+  watchPipeline(pipelineId: string, callback: (messages: ChatMessage[]) => void): () => void {
+    const chat = this.getChatForPipeline(pipelineId);
+    
+    // Remove watcher anterior se existir
+    const existingClose = this._watchers.get(pipelineId);
+    if (existingClose) {
+      existingClose();
+    }
+
+    const close = chat.watch(callback);
+    this._watchers.set(pipelineId, close);
+
+    return () => {
+      close();
+      this._watchers.delete(pipelineId);
+    };
+  }
+
+  /**
    * Cleanup: remover um pipeline do cache
    */
   removePipelineChat(pipelineId: string): void {
+    const close = this._watchers.get(pipelineId);
+    if (close) {
+      close();
+      this._watchers.delete(pipelineId);
+    }
     this._chats.delete(pipelineId);
   }
 
   /**
-   * Obter diretório raiz de histórico
+   * Obter diretorio raiz de historico
    */
   getHistoryDirectory(): string {
     return this._historyDir;
   }
+
+  /**
+   * Obter caminho do arquivo de chat de um pipeline
+   */
+  getChatFilePath(pipelineId: string): string {
+    const chat = this.getChatForPipeline(pipelineId);
+    return chat.getFilePath();
+  }
+
+  /**
+   * Dispose: limpa todos os recursos
+   */
+  dispose(): void {
+    this._watchers.forEach(close => close());
+    this._watchers.clear();
+    this._chats.clear();
+  }
 }
 
-// Instância singleton
+// Instancia singleton
 let instance: PipelineChatHistoryService | null = null;
 
 export function getPipelineChatHistoryService(): PipelineChatHistoryService {
@@ -250,4 +457,14 @@ export function getPipelineChatHistoryService(): PipelineChatHistoryService {
     instance = new PipelineChatHistoryService();
   }
   return instance;
+}
+
+/**
+ * Reseta a instancia singleton (util para testes)
+ */
+export function resetPipelineChatHistoryService(): void {
+  if (instance) {
+    instance.dispose();
+    instance = null;
+  }
 }

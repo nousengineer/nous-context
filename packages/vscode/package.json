@@ -125,6 +125,23 @@
       {
         "command": "thinkcoffee.viewAgentModels",
         "title": "ThinkCoffee: View Agent Models"
+      },
+      {
+        "command": "thinkcoffee.showHistory",
+        "title": "ThinkCoffee: Show Pipeline History",
+        "icon": "$(history)"
+      },
+      {
+        "command": "thinkcoffee.backupHistory",
+        "title": "ThinkCoffee: Backup Pipeline History"
+      },
+      {
+        "command": "thinkcoffee.restoreHistory",
+        "title": "ThinkCoffee: Restore Pipeline History"
+      },
+      {
+        "command": "thinkcoffee.exportHistory",
+        "title": "ThinkCoffee: Export Pipeline History"
       }
     ],
     "menus": {
@@ -154,6 +171,11 @@
         },
         {
           "command": "thinkcoffee.stopAgents",
+          "when": "view == thinkcoffee.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "thinkcoffee.showHistory",
           "when": "view == thinkcoffee.chat",
           "group": "navigation"
         }

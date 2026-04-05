@@ -1,0 +1,14 @@
+# Grafana Dashboards Provisioning
+
+apiVersion: 1
+
+providers:
+  - name: 'ThinkCoffee'
+    orgId: 1
+    folder: 'ThinkCoffee'
+    folderUid: 'thinkcoffee'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

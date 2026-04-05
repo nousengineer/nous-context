@@ -110,6 +110,10 @@ export class ChatService {
     fs.writeFileSync(this.filePath, '', 'utf-8');
   }
 
+  addMessageDirectly(message: ChatMessage): void {
+    fs.appendFileSync(this.filePath, JSON.stringify(message) + '\n', 'utf-8');
+  }
+
   /** Watch for new messages (returns close function) */
   watch(callback: (msgs: ChatMessage[]) => void): () => void {
     let lastSize = 0;

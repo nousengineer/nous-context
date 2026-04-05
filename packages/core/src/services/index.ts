@@ -10,3 +10,7 @@ export { AutoSyncService } from './AutoSyncService';
 export { ActionLogService } from './ActionLogService';
 export { SnapshotService } from './SnapshotService';
 export { RollbackService } from './RollbackService';
+
+// Chat History Service
+export { ChatHistoryService } from './ChatHistoryService';
+export type { SaveHistoryInput, HistoryFilter, BackupInfo, RecoveryResult } from './ChatHistoryService';

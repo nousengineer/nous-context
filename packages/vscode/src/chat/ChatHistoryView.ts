@@ -1,102 +1,71 @@
 import * as vscode from 'vscode';
 import { getPipelineChatHistoryService } from './PipelineChatHistoryService';
 
-/**
- * Manages the webview for displaying pipeline chat history backups.
- */
-export class ChatHistoryView {
-  private static readonly viewType = 'thinkcoffee.chatHistory';
-  private static panel: vscode.WebviewPanel | undefined;
+export class ChatHistoryView implements vscode.TreeDataProvider<vscode.TreeItem> {
+  private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | null | void> = new vscode.EventEmitter<vscode.TreeItem | undefined | null | void>();
+  readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | null | void> = this._onDidChangeTreeData.event;
 
-  public static show(extensionUri: vscode.Uri, pipelineId: string) {
-    const column = vscode.window.activeTextEditor
-      ? vscode.window.activeTextEditor.viewColumn
-      : undefined;
+  refresh(): void {
+    this._onDidChangeTreeData.fire();
+  }
 
-    if (ChatHistoryView.panel) {
-      ChatHistoryView.panel.reveal(column);
-      ChatHistoryView.updateContent(pipelineId);
-      return;
+  getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
+    return element;
+  }
+
+  getChildren(element?: vscode.TreeItem): Thenable<vscode.TreeItem[]> {
+    if (element) {
+      return Promise.resolve([]);
     }
 
-    ChatHistoryView.panel = vscode.window.createWebviewPanel(
-      ChatHistoryView.viewType,
-      `Histórico: ${pipelineId}`,
-      column || vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'resources')]
-      }
-    );
-
-    ChatHistoryView.panel.onDidDispose(() => {
-      ChatHistoryView.panel = undefined;
-    }, null, []);
-
-    ChatHistoryView.panel.webview.onDidReceiveMessage(async (message) => {
-        const historyService = getPipelineChatHistoryService();
-        switch (message.command) {
-          case 'restore':
-            try {
-              historyService.restorePipelineHistory(message.pipelineId, message.backupFile);
-              vscode.window.showInformationMessage(`Histórico do pipeline ${message.pipelineId} restaurado com sucesso.`);
-              // Maybe refresh the chat view
-            } catch (e: any) {
-              vscode.window.showErrorMessage(`Erro ao restaurar histórico: ${e.message}`);
-            }
-            return;
+    const historyService = getPipelineChatHistoryService();
+    // Use the actual directory to find active chats, not just backups
+    const fs = require('fs');
+    const path = require('path');
+    const historyDir = historyService.getHistoryDirectory();
+    
+    let pipelineIds: string[] = [];
+    
+    if (fs.existsSync(historyDir)) {
+      const files = fs.readdirSync(historyDir);
+      const activeIds = new Set<string>();
+      
+      files.forEach((f: string) => {
+        // Match active pipeline chats
+        const matchActive = f.match(/^pipeline-(.*)\.jsonl$/);
+        if (matchActive) {
+          activeIds.add(matchActive[1]);
+        }
+        
+        // Match backups
+        const matchBackup = f.match(/^backup_([^_]+)_/);
+        if (matchBackup) {
+          activeIds.add(matchBackup[1]);
         }
       });
-
-    ChatHistoryView.updateContent(pipelineId);
-  }
-
-  private static updateContent(pipelineId: string) {
-    if (!ChatHistoryView.panel) {
-      return;
+      
+      pipelineIds = Array.from(activeIds);
     }
-    const historyService = getPipelineChatHistoryService();
-    const backups = historyService.listBackups(pipelineId);
-    ChatHistoryView.panel.webview.html = this.getHtmlForWebview(pipelineId, backups);
-  }
 
-  private static getHtmlForWebview(pipelineId: string, backups: Array<{ file: string; path: string; timestamp: string }>): string {
-    const backupListHtml = backups.length > 0
-      ? backups.map(b => `
-        <div class="backup-item">
-          <span>${b.file} (Data: ${new Date(b.timestamp).toLocaleString('pt-BR')})</span>
-          <button class="restore-button" data-pipeline-id="${pipelineId}" data-backup-file="${b.path}">Restaurar</button>
-        </div>
-      `).join('')
-      : '<p>Nenhum backup de histórico encontrado para este pipeline.</p>';
+    if (pipelineIds.length === 0) {
+      const emptyItem = new vscode.TreeItem('Nenhum histórico encontrado', vscode.TreeItemCollapsibleState.None);
+      return Promise.resolve([emptyItem]);
+    }
 
-    return `<!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Histórico do Pipeline</title>
-        <style>
-          body { font-family: var(--vscode-font-family); color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); }
-          .backup-item { display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid var(--vscode-side-bar-border); }
-          .restore-button { background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 5px 10px; cursor: pointer; }
-          .restore-button:hover { background-color: var(--vscode-button-hover-background); }
-        </style>
-      </head>
-      <body>
-        <h1>Histórico para ${pipelineId}</h1>
-        ${backupListHtml}
-        <script>
-          const vscode = acquireVsCodeApi();
-          document.addEventListener('click', event => {
-            if (event.target.classList.contains('restore-button')) {
-              const pipelineId = event.target.dataset.pipelineId;
-              const backupFile = event.target.dataset.backupFile;
-              vscode.postMessage({ command: 'restore', pipelineId, backupFile });
-            }
-          });
-        </script>
-      </body>
-      </html>`;
+    const pipelineItems = pipelineIds.map(id => {
+      const item = new vscode.TreeItem(`Pipeline: ${id}`, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon('history');
+      item.description = 'Histórico do Chat';
+      item.command = {
+        command: 'thinkcoffee.openPipelineChat',
+        title: 'Abrir Histórico do Chat',
+        arguments: [id],
+      };
+      // Context value for adding delete/export actions later
+      item.contextValue = 'pipelineHistoryItem';
+      return item;
+    });
+
+    return Promise.resolve(pipelineItems);
   }
 }

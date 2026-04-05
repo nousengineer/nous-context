@@ -38,6 +38,7 @@ interface AgentContext {
 const AGENT_SIGLA: Record<AgentRole, string> = {
   'product-manager': 'PM',
   'architect': 'AR',
+  'organizer': 'OG',
   'backend': 'BE',
   'frontend': 'FE',
   'devops': 'DO',
@@ -86,6 +87,23 @@ ${ctx.task.title}: ${ctx.task.description}
 9. Formate sua resposta com markdown.
 10. NAO use emojis — nunca.`;
 
+  // Extra instructions for the organizer agent
+  const roleExtra = role === 'organizer'
+    ? `\n\n## Instrucoes especiais do Organizer
+1. PRIMEIRO: Use mention_agent para consultar o product-manager. Pergunte: "Qual e o melhor design pattern (MVC, Clean Architecture, DDD, Hexagonal, Modular, etc) para este projeto, considerando o objetivo e a stack?"
+2. LEIA a resposta do PM nos outputs anteriores. Se nao houver resposta ainda, use mention_agent.
+3. Use list_files e read_file para mapear TODA a estrutura atual do projeto.
+4. REORGANIZE as pastas e arquivos seguindo o design pattern que o PM recomendou:
+   - Crie as novas pastas via write_file (escreva um arquivo dentro delas)
+   - Mova arquivos: leia o conteudo (read_file), escreva no novo caminho (write_file), delete o antigo (run_command: rm ou del)
+   - Atualize imports/requires quebrados nos arquivos movidos
+5. Escreva um arquivo REORGANIZATION.md na raiz com: pattern escolhido, estrutura antes/depois, lista de mudancas.
+6. FACA O COMMIT: use run_command para executar:
+   - git add -A
+   - git commit -m "refactor: reorganize project structure to [PATTERN] pattern"
+7. NAO faca git push — apenas commit local.`
+    : '';
+
   const prev = ctx.previousOutputs.length > 0
     ? '\n\n## Outputs anteriores dos agentes\n' + ctx.previousOutputs.map(
       p => `### ${AGENT_META[p.agent].label}\n${p.output.substring(0, 3000)}`
@@ -96,7 +114,7 @@ ${ctx.task.title}: ${ctx.task.description}
     ? `\n\n## FEEDBACK DE REJEICAO (prioridade alta)\n${ctx.rejectionFeedback}`
     : '';
 
-  return base + prev + feedback;
+  return base + roleExtra + prev + feedback;
 }
 
 function buildPMAutoAssignPrompt(
@@ -941,6 +959,7 @@ export class AgentService {
 
     try {
       let fullOutput = '';
+      const filesWritten: string[] = [];
       let toolCallRounds = 0;
       const MAX_TOOL_ROUNDS = 15;
 
@@ -1015,6 +1034,17 @@ export class AgentService {
           toolResults.push(
             new vscode.LanguageModelToolResultPart(tc.callId, [new vscode.LanguageModelTextPart(result)])
           );
+
+          // Track write_file calls so PM can verify artifacts
+          if (tc.name === 'write_file') {
+            const inp = tc.input as Record<string, string>;
+            if (inp.path && result.startsWith('File written:')) {
+              filesWritten.push(inp.path);
+            }
+          }
+
+          // Include tool results in fullOutput so PM sees them
+          fullOutput += `\n[tool:${tc.name}] ${result}\n`;
         }
 
         // Add tool results as user message
@@ -1022,7 +1052,7 @@ export class AgentService {
       }
 
       // Task complete
-      this._pipelines.completeTask(ctx.projectId, pipelineId, task.id, fullOutput);
+      this._pipelines.completeTask(ctx.projectId, pipelineId, task.id, fullOutput, filesWritten.length > 0 ? filesWritten : undefined);
       this._pipelines.saveAgentHistory(
         ctx.projectId, pipelineId, task.id,
         this._contexts, this._decisions,
@@ -1458,6 +1488,10 @@ export class AgentService {
     const pipeline = this._pipelines.get(projectId, pipelineId);
     if (!pipeline) return;
 
+    // Reload task from saved pipeline to get updated artifacts (completeTask writes to disk)
+    const currentPhase = pipeline.phases[pipeline.currentPhase];
+    const savedTask = currentPhase?.tasks.find(t => t.id === task.id) || task;
+
     this._pipelineChat(pipelineId).send({
       sender: 'product-manager',
       senderLabel: agentLabel('product-manager'),
@@ -1472,20 +1506,27 @@ export class AgentService {
       const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: getActivePMModel() });
       if (!model) return; // Skip review if model unavailable
 
+      // Build artifacts section from task data
+      const artifactsList = savedTask.artifacts && savedTask.artifacts.length > 0
+        ? `## Arquivos criados/modificados pelo agente\n${savedTask.artifacts.map(f => `- ${f}`).join('\n')}\n\n`
+        : '## Arquivos criados/modificados pelo agente\nNenhum arquivo foi criado via write_file.\n\n';
+
       const prompt = `Voce e o Product Manager (PM) supervisando a pipeline: "${pipeline.objective}"
 
 ## Agente: ${agentLabel(agentRole)}
 ## Tarefa: ${task.title}
 ## Descricao: ${task.description}
 
-## Output do agente (ultimos 6000 chars)
-${output.substring(output.length - 6000)}
+${artifactsList}## Output do agente (ultimos 8000 chars)
+${output.substring(output.length - 8000)}
 
 ## Sua tarefa
 Avalie se o agente completou a tarefa adequadamente:
 1. O output atende a descricao da tarefa?
-2. O agente usou write_file para criar/modificar os arquivos necessarios?
+2. O agente usou write_file para criar/modificar os arquivos necessarios? Verifique a lista de "Arquivos criados/modificados" acima.
 3. Ha erros graves ou omissoes criticas?
+
+IMPORTANTE: A lista de arquivos acima mostra TODAS as chamadas write_file confirmadas. Se ha arquivos listados, o agente DE FATO criou esses arquivos.
 
 Responda APENAS com JSON valido:
 {"approved": true, "summary": "Breve resumo do que foi feito"}
@@ -1877,10 +1918,13 @@ Prefira "retry" na duvida. Aborte apenas em situacoes realmente irrecuperaveis.`
         return { approved: true, feedback: '' };
       }
 
-      // Collect outputs from this phase
-      const outputs = phase.tasks.map(t =>
-        `### ${AGENT_META[t.agent].label} — ${t.title}\nStatus: ${t.status}\n${t.output ? t.output.substring(0, 4000) : '(sem output)'}`
-      ).join('\n\n');
+      // Collect outputs from this phase (including artifacts)
+      const outputs = phase.tasks.map(t => {
+        const artifactsInfo = t.artifacts && t.artifacts.length > 0
+          ? `Arquivos criados: ${t.artifacts.join(', ')}\n`
+          : '';
+        return `### ${AGENT_META[t.agent].label} — ${t.title}\nStatus: ${t.status}\n${artifactsInfo}${t.output ? t.output.substring(0, 4000) : '(sem output)'}`;
+      }).join('\n\n');
 
       // Collect objective and prior context
       const priorPhases = pipeline.phases

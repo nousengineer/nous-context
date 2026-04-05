@@ -1,0 +1,125 @@
+# ==============================================================================
+# ThinkCoffee - Docker Compose com Monitoramento
+# ==============================================================================
+# Uso:
+#   docker compose -f docker-compose.monitoring.yml up -d
+# ==============================================================================
+
+version: "3.9"
+
+services:
+  # --- MCP Server -------------------------------------------------------------
+  mcp-server:
+    image: thinkcoffee/mcp-server:${THINKCOFFEE_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: thinkcoffee-mcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      THINKCOFFEE_DB_PATH: /data/data.sqlite
+      THINKCOFFEE_DATA_DIR: /data
+      THINKCOFFEE_SNAPSHOT_DIR: /data/snapshots
+      THINKCOFFEE_LOG_DIR: /data/logs
+      MCP_PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - thinkcoffee_data:/data
+    ports:
+      - "${MCP_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('fs');try{fs.accessSync('/data',fs.constants.W_OK);process.exit(0)}catch(e){process.exit(1)}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - thinkcoffee-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=3000"
+      - "prometheus.path=/metrics"
+
+  # --- Prometheus -------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: thinkcoffee-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - thinkcoffee-network
+    profiles:
+      - monitoring
+
+  # --- Grafana ----------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: thinkcoffee-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-thinkcoffee}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    networks:
+      - thinkcoffee-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # --- Alertmanager -----------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: thinkcoffee-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    networks:
+      - thinkcoffee-network
+    profiles:
+      - monitoring
+
+volumes:
+  thinkcoffee_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+
+networks:
+  thinkcoffee-network:
+    driver: bridge

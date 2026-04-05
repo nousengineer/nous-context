@@ -8,6 +8,7 @@ import crypto from 'crypto';
 export type AgentRole =
   | 'product-manager'
   | 'architect'
+  | 'organizer'
   | 'backend'
   | 'frontend'
   | 'devops'
@@ -96,6 +97,10 @@ export const AGENT_META: Record<AgentRole, { label: string; description: string 
     label: 'Code Reviewer',
     description: 'Revisao final: padroes de codigo, seguranca, performance, consistencia.',
   },
+  'organizer': {
+    label: 'Organizer',
+    description: 'Consulta o PM para definir o design pattern ideal, organiza pastas e arquivos conforme o padrao escolhido e faz o commit.',
+  },
 };
 
 // ─── Default phase templates ─────────────────────────────────
@@ -139,6 +144,10 @@ const DEFAULT_TASK_DESCRIPTIONS: Record<AgentRole, (obj: string) => { title: str
   'code-review': () => ({
     title: 'Final code review',
     description: 'Review for:\n1. Code patterns & standards\n2. Security vulnerabilities\n3. Performance issues\n4. Architecture consistency\n5. Merge readiness',
+  }),
+  'organizer': (obj) => ({
+    title: 'Organize project structure',
+    description: `Para o objetivo: "${obj}"\n\n1. Consulte o PM (@product-manager) para decidir o design pattern ideal (MVC, Clean Architecture, DDD, Hexagonal, etc)\n2. Analise a estrutura atual de pastas e arquivos\n3. Reorganize pastas/arquivos conforme o pattern escolhido\n4. Mova, renomeie ou crie pastas necessarias\n5. Atualize imports quebrados\n6. Faca commit com mensagem descrevendo a reorganizacao`,
   }),
 };
 
@@ -268,6 +277,41 @@ export class PipelineService {
   getActive(projectId: string): Pipeline | null {
     const all = this.list(projectId);
     return all.find(p => p.status !== 'completed' && p.status !== 'failed') || null;
+  }
+
+  /** Get all failed pipelines for a project */
+  getFailed(projectId: string): Pipeline[] {
+    return this.list(projectId).filter(p => p.status === 'failed');
+  }
+
+  /** Resume a failed pipeline — reset status to active and prepare the failed phase for re-run */
+  resumeFailed(projectId: string, pipelineId: string): Pipeline | null {
+    const p = this.get(projectId, pipelineId);
+    if (!p || p.status !== 'failed') return null;
+
+    // Reset pipeline status
+    p.status = 'active';
+
+    // Find the failed phase (or current phase) and reset it
+    const phase = p.phases[p.currentPhase];
+    if (phase) {
+      if (phase.status === 'failed') {
+        phase.status = 'in-progress';
+      }
+      // Reset failed/in-progress tasks to pending so they re-run
+      for (const task of phase.tasks) {
+        if (task.status === 'failed' || task.status === 'in-progress') {
+          task.status = 'pending';
+          task.startedAt = undefined;
+          task.completedAt = undefined;
+          task.output = undefined;
+        }
+      }
+    }
+
+    p.updatedAt = new Date().toISOString();
+    savePipeline(p);
+    return p;
   }
 
   /** Get tasks for a specific agent role in the current phase */
