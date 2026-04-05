@@ -19,3 +19,7 @@ export * from './validation/schemas';
 
 // Utils
 export { CryptoUtils } from './utils/crypto';
+
+// Chat
+export { ChatService } from './chat';
+export type { ChatMessage } from './chat';

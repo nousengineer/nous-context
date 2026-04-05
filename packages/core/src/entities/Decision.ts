@@ -13,15 +13,15 @@ export class Decision {
   description: string;
 
   @Column({ type: 'simple-json', nullable: true })
-  rationale: Record<string, any>;
+  rationale: Record<string, any> | null;
 
   @Column({ default: 'active' })
   status: string;
 
   @Column({ type: 'simple-json', nullable: true })
-  alternatives: Record<string, any>;
+  alternatives: Record<string, any> | null;
 
-  @ManyToOne(() => Project, (project) => project.decisions)
+  @ManyToOne(() => Project, (project) => project.decisions, { onDelete: 'CASCADE' })
   project: Project;
 
   @CreateDateColumn()

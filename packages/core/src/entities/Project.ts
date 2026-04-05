@@ -10,19 +10,19 @@ export class Project {
   @Column()
   name: string;
 
-  @Column({ nullable: true })
+  @Column('text', { nullable: true })
   description: string | null;
 
   @Column({ default: 'active' })
   status: string;
 
   @Column({ type: 'simple-json', nullable: true })
-  metadata: Record<string, any>;
+  metadata: Record<string, any> | null;
 
-  @OneToMany(() => ContextEntry, (context) => context.project)
+  @OneToMany(() => ContextEntry, (context) => context.project, { cascade: true })
   contextEntries: ContextEntry[];
 
-  @OneToMany(() => Decision, (decision) => decision.project)
+  @OneToMany(() => Decision, (decision) => decision.project, { cascade: true })
   decisions: Decision[];
 
   @CreateDateColumn()

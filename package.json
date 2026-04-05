@@ -11,7 +11,8 @@
     "build:vscode": "pnpm --filter thinkcoffee-vscode build",
     "dev:core": "pnpm --filter @thinkcoffee/core dev",
     "dev:mcp": "pnpm --filter @thinkcoffee/mcp-server dev",
-    "dev:cli": "pnpm --filter @thinkcoffee/cli dev"
+    "dev:cli": "pnpm --filter @thinkcoffee/cli dev",
+    "test": "node scripts/test-integration.js"
   },
   "keywords": [
     "ai",

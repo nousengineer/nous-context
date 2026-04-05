@@ -16,12 +16,12 @@ export class ContextEntry {
   category: string;
 
   @Column({ type: 'simple-json', nullable: true })
-  metadata: Record<string, any>;
+  metadata: Record<string, any> | null;
 
   @Column({ default: 1 })
   priority: number;
 
-  @ManyToOne(() => Project, (project) => project.contextEntries)
+  @ManyToOne(() => Project, (project) => project.contextEntries, { onDelete: 'CASCADE' })
   project: Project;
 
   @CreateDateColumn()

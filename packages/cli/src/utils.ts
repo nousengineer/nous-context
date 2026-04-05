@@ -1,7 +1,6 @@
 import { getDatabase, ProjectService, ContextService, DecisionService } from '@thinkcoffee/core';
-import type { DataSource } from 'typeorm';
 
-let _db: DataSource | null = null;
+let _db: Awaited<ReturnType<typeof getDatabase>> | null = null;
 
 async function db() {
   if (!_db) _db = await getDatabase();

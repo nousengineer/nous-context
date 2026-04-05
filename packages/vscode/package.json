@@ -7,43 +7,133 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{
-        "id": "thinkcoffee",
-        "title": "ThinkCoffee",
-        "icon": "resources/icon.svg"
-      }]
+      "activitybar": [
+        {
+          "id": "thinkcoffee",
+          "title": "ThinkCoffee",
+          "icon": "resources/icon.svg"
+        }
+      ]
     },
     "views": {
       "thinkcoffee": [
-        { "id": "thinkcoffee.projects", "name": "Projects" },
-        { "id": "thinkcoffee.context", "name": "Context" },
-        { "id": "thinkcoffee.decisions", "name": "Decisions" }
+        {
+          "id": "thinkcoffee.projects",
+          "name": "Projects"
+        },
+        {
+          "id": "thinkcoffee.context",
+          "name": "Context"
+        },
+        {
+          "id": "thinkcoffee.decisions",
+          "name": "Decisions"
+        }
       ]
     },
     "commands": [
-      { "command": "thinkcoffee.refreshProjects", "title": "ThinkCoffee: Refresh Projects" },
-      { "command": "thinkcoffee.addContext", "title": "ThinkCoffee: Add Context Entry" },
-      { "command": "thinkcoffee.addDecision", "title": "ThinkCoffee: Record Decision" },
-      { "command": "thinkcoffee.syncContext", "title": "ThinkCoffee: Sync to AI Tools" },
-      { "command": "thinkcoffee.exportContext", "title": "ThinkCoffee: Export Context" }
-    ]
+      {
+        "command": "thinkcoffee.refreshProjects",
+        "title": "ThinkCoffee: Refresh Projects"
+      },
+      {
+        "command": "thinkcoffee.createProject",
+        "title": "ThinkCoffee: Create Project"
+      },
+      {
+        "command": "thinkcoffee.addContext",
+        "title": "ThinkCoffee: Add Context Entry"
+      },
+      {
+        "command": "thinkcoffee.addFileAsContext",
+        "title": "ThinkCoffee: Add File as Context"
+      },
+      {
+        "command": "thinkcoffee.addSelectionAsContext",
+        "title": "ThinkCoffee: Add Selection as Context"
+      },
+      {
+        "command": "thinkcoffee.addStructureAsContext",
+        "title": "ThinkCoffee: Add Workspace Structure as Context"
+      },
+      {
+        "command": "thinkcoffee.addDecision",
+        "title": "ThinkCoffee: Record Decision"
+      },
+      {
+        "command": "thinkcoffee.syncContext",
+        "title": "ThinkCoffee: Sync to AI Tools"
+      },
+      {
+        "command": "thinkcoffee.exportContext",
+        "title": "ThinkCoffee: Export Context"
+      },
+      {
+        "command": "thinkcoffee.openContextFile",
+        "title": "ThinkCoffee: Open Context File"
+      },
+      {
+        "command": "thinkcoffee.openChat",
+        "title": "ThinkCoffee: Open AI Chat"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "thinkcoffee.addSelectionAsContext",
+          "when": "editorHasSelection",
+          "group": "thinkcoffee"
+        },
+        {
+          "command": "thinkcoffee.addFileAsContext",
+          "group": "thinkcoffee"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "thinkcoffee.addFileAsContext",
+          "when": "!explorerResourceIsFolder",
+          "group": "thinkcoffee"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "thinkcoffee.refreshProjects",
+          "when": "view == thinkcoffee.projects",
+          "group": "navigation"
+        },
+        {
+          "command": "thinkcoffee.createProject",
+          "when": "view == thinkcoffee.projects",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node esbuild.js",
+    "build:tsc": "tsc",
     "dev": "tsc --watch",
-    "package": "vsce package"
+    "package": "node esbuild.js && vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.js"
   },
   "dependencies": {
     "@thinkcoffee/core": "workspace:*"
   },
   "devDependencies": {
-    "@types/vscode": "^1.90.0",
     "@types/node": "^20.19.39",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.28.0",
     "typescript": "^5.1.6"
   }
 }
