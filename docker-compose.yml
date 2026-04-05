@@ -1,4 +1,13 @@
-﻿version: "3.9"
+version: "3.9"
+
+# ==============================================================================
+# ThinkCoffee - Docker Compose (V3 - Agent Safety Net)
+# ==============================================================================
+# Uso:
+#   docker compose up -d                    # Inicia MCP server
+#   docker compose --profile cli run cli    # Roda CLI
+#   docker compose logs -f mcp-server       # Ver logs
+# ==============================================================================
 
 services:
   # --- MCP Server (Production) -----------------------------------------------
@@ -7,32 +16,70 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
-    image: thinkcoffee/mcp-server:latest
+      args:
+        THINKCOFFEE_VERSION: ${THINKCOFFEE_VERSION:-latest}
+    image: thinkcoffee/mcp-server:${THINKCOFFEE_VERSION:-latest}
     container_name: thinkcoffee-mcp
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
       THINKCOFFEE_DB_PATH: /data/data.sqlite
       THINKCOFFEE_DATA_DIR: /data
+      THINKCOFFEE_SNAPSHOT_DIR: /data/snapshots
+      THINKCOFFEE_LOG_DIR: /data/logs
+      MCP_PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # V3 Safety Net
+      THINKCOFFEE_SNAPSHOT_RETENTION_DAYS: ${THINKCOFFEE_SNAPSHOT_RETENTION_DAYS:-7}
+      THINKCOFFEE_SNAPSHOT_MAX_SIZE_MB: ${THINKCOFFEE_SNAPSHOT_MAX_SIZE_MB:-50}
+      THINKCOFFEE_DRY_RUN_DEFAULT: ${THINKCOFFEE_DRY_RUN_DEFAULT:-false}
+      THINKCOFFEE_DIFF_PREVIEW_MODE: ${THINKCOFFEE_DIFF_PREVIEW_MODE:-existing-only}
+      THINKCOFFEE_COMMAND_CONFIRMATION: ${THINKCOFFEE_COMMAND_CONFIRMATION:-destructive-only}
     volumes:
       - thinkcoffee_data:/data
     ports:
       - "${MCP_PORT:-3000}:3000"
     healthcheck:
-      test: ["CMD", "node", "-e", "require('fs').accessSync('/data', require('fs').constants.W_OK)"]
+      test: ["CMD", "node", "-e", "const fs=require('fs');try{fs.accessSync('/data',fs.constants.W_OK);fs.accessSync('/data/snapshots',fs.constants.W_OK);fs.accessSync('/data/logs',fs.constants.W_OK);process.exit(0)}catch(e){process.exit(1)}"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     networks:
       - thinkcoffee-network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
-        max-file: "3"
+        max-file: "5"
+
+  # --- CLI (on-demand) --------------------------------------------------------
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+      target: production
+      args:
+        THINKCOFFEE_VERSION: ${THINKCOFFEE_VERSION:-latest}
+    image: thinkcoffee/cli:${THINKCOFFEE_VERSION:-latest}
+    container_name: thinkcoffee-cli
+    profiles:
+      - cli
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      THINKCOFFEE_DATA_DIR: /data
+      THINKCOFFEE_SNAPSHOT_DIR: /data/snapshots
+      THINKCOFFEE_LOG_DIR: /data/logs
+    volumes:
+      - thinkcoffee_data:/data
+      - .:/workspace
+    working_dir: /workspace
+    networks:
+      - thinkcoffee-network
 
 volumes:
   thinkcoffee_data:

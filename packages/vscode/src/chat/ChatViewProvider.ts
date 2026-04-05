@@ -135,7 +135,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
 
     const config = loadAgentConfig();
-    if (config.mode === 'auto') {
+    if (config.mode === 'auto' || isQualityPreset(config.mode)) {
       await this._agentService.autoAssignModels(active);
     }
 
@@ -492,6 +492,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (config.mode === 'auto' || isQualityPreset(config.mode)) {
         await this._agentService.autoAssignModels(p);
       }
+      this._sendState(); // Refresh UI with updated mode/models
       this._agentService.runPipeline(project.id, p.id);
     }
   }

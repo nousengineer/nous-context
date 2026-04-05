@@ -183,11 +183,8 @@ export function loadAgentConfig(): AgentModelConfig {
   } catch (err) {
     console.error(`[ThinkCoffee] Failed to load agent config: ${(err as Error).message}`);
   }
-  // Return default
-  return {
-    mode: 'manual',
-    models: { ...DEFAULT_AGENT_MODELS },
-  };
+  // Return default — cafe-soluvel (gratuito) para nao gastar sem querer
+  return applyQualityPreset('cafe-soluvel');
 }
 
 /** Save agent model configuration */

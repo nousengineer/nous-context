@@ -1,11 +1,20 @@
-﻿# ==============================================================================
-# ThinkCoffee CLI - Dockerfile
+# ==============================================================================
+# ThinkCoffee CLI - Dockerfile (V3 - Agent Safety Net)
 # ==============================================================================
 # Build: docker build -f Dockerfile.cli -t thinkcoffee/cli:latest .
-# Run:   docker run -v \$(pwd):/workspace thinkcoffee/cli export
+# Run:   docker run -v $(pwd):/workspace thinkcoffee/cli export
+#        docker run -v $(pwd):/workspace thinkcoffee/cli rollback <pipelineId>
+#        docker run -v $(pwd):/workspace thinkcoffee/cli pipeline run --dry-run
+#
+# V3 changes:
+#   - ARG for version injection
+#   - /data dirs for snapshots and logs
+#   - rollback and dry-run support
 # ==============================================================================
 
 FROM node:20-alpine AS builder
+
+ARG THINKCOFFEE_VERSION=dev
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
@@ -25,11 +34,15 @@ COPY packages/cli/tsconfig.json ./packages/cli/
 
 RUN pnpm build:core && pnpm build:cli
 
+# Write version file
+RUN echo "{\"version\":\"${THINKCOFFEE_VERSION}\",\"buildDate\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+    > /app/packages/cli/dist/version.json
+
 # --- Production ---------------------------------------------------------------
 FROM node:20-alpine AS production
 
 LABEL org.opencontainers.image.title="ThinkCoffee CLI"
-LABEL org.opencontainers.image.description="AI Context Management CLI"
+LABEL org.opencontainers.image.description="AI Context Management CLI (V3 Agent Safety Net)"
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
@@ -46,11 +59,16 @@ RUN pnpm install --frozen-lockfile --prod && pnpm store prune
 COPY --from=builder /app/packages/core/dist ./packages/core/dist
 COPY --from=builder /app/packages/cli/dist ./packages/cli/dist
 
-RUN chown -R thinkcoffee:thinkcoffee /app
+# Data dirs for snapshots + logs (CLI pode precisar para rollback)
+RUN mkdir -p /data/snapshots /data/logs && \
+    chown -R thinkcoffee:thinkcoffee /app /data
 
 USER thinkcoffee
 
 ENV NODE_ENV=production
+ENV THINKCOFFEE_DATA_DIR=/data
+ENV THINKCOFFEE_SNAPSHOT_DIR=/data/snapshots
+ENV THINKCOFFEE_LOG_DIR=/data/logs
 
 WORKDIR /workspace
 
