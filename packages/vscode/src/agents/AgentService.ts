@@ -316,6 +316,7 @@ async function handleToolCall(
 
   switch (toolCall.name) {
     case 'read_file': {
+      if (!input.path || typeof input.path !== 'string') return 'Error: path is required (string)';
       const abs = path.resolve(workspace, input.path);
       if (!abs.startsWith(workspace)) return 'Error: Path traversal denied';
       try {
@@ -346,6 +347,8 @@ async function handleToolCall(
       }
     }
     case 'write_file': {
+      if (!input.path || typeof input.path !== 'string') return 'Error: path is required (string)';
+      if (!input.content && input.content !== '') return 'Error: content is required (string)';
       const abs = path.resolve(workspace, input.path);
       if (!abs.startsWith(workspace)) return 'Error: Path traversal denied';
       try {
@@ -1620,6 +1623,7 @@ Prefira "retry" na duvida. Aborte apenas em situacoes realmente irrecuperaveis.`
       }
     }
     phase.status = 'in-progress';
+    pipeline.status = 'active';
     this._pipelines.save(pipeline);
   }
 
