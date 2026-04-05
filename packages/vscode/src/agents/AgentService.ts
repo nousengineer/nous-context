@@ -350,6 +350,7 @@ export class AgentService {
   private _running = new Map<string, RunningAgent>(); // taskId -> RunningAgent
   private _directInvocations = new Set<AgentRole>(); // roles with active direct invocations
   private _pendingMentions: { from: AgentRole; to: AgentRole; message: string }[] = [];
+  private _activePipelineLoop: string | null = null; // pipelineId of active PM oversight loop
   private _getChat: () => ChatService;
   private _pipelines: PipelineService;
   private _contexts: ContextService;
@@ -614,9 +615,13 @@ export class AgentService {
     // Check for rejection feedback
     const rejectionFeedback = (phase as any).rejectionFeedback;
 
+    // Only run tasks that are pending (skip completed or already in-progress)
+    const tasksToRun = phase.tasks.filter(t => t.status === 'pending');
+    if (tasksToRun.length === 0) return;
+
     if (phase.parallel) {
       // Run all agents in parallel
-      const promises = phase.tasks.map(task =>
+      const promises = tasksToRun.map(task =>
         this._runAgent(task, {
           projectId: project.id,
           projectName: project.name,
@@ -630,7 +635,7 @@ export class AgentService {
       await Promise.allSettled(promises);
     } else {
       // Run sequentially
-      for (const task of phase.tasks) {
+      for (const task of tasksToRun) {
         await this._runAgent(task, {
           projectId: project.id,
           projectName: project.name,
@@ -798,6 +803,11 @@ export class AgentService {
         content: `Tarefa concluida: **${task.title}**`,
         type: 'info',
       });
+
+      // PM reviews individual task after completion
+      if (role !== 'product-manager') {
+        await this._pmTaskReview(ctx.projectId, pipelineId, task, role, fullOutput);
+      }
 
     } catch (err: any) {
       if (cts.token.isCancellationRequested) {
@@ -995,8 +1005,683 @@ export class AgentService {
   }
 
   dispose(): void {
+    this._activePipelineLoop = null;
     this.stopAll();
     this._onAgentStateChange.dispose();
+  }
+
+  /** Check if PM oversight loop is running for a pipeline */
+  isPipelineLoopActive(pipelineId: string): boolean {
+    return this._activePipelineLoop === pipelineId;
+  }
+
+  // ─── PM Pipeline Oversight Loop ─────────────────────────
+
+  /**
+   * Run the full pipeline with PM oversight.
+   * PM monitors each phase: run agents -> PM reviews -> approve/reject -> repeat.
+   * Only one loop can be active at a time.
+   */
+  async runPipeline(projectId: string, pipelineId: string): Promise<void> {
+    // Prevent duplicate loops
+    if (this._activePipelineLoop === pipelineId) return;
+    this._activePipelineLoop = pipelineId;
+
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: 'Assumindo supervisao da pipeline. Vou acompanhar cada fase e avaliar os resultados.',
+      type: 'info',
+    });
+
+    try {
+      while (this._activePipelineLoop === pipelineId) {
+        const pipeline = this._pipelines.get(projectId, pipelineId);
+        if (!pipeline) break;
+
+        // Pipeline done?
+        if (pipeline.status === 'completed' || pipeline.status === 'failed') {
+          this._chat.send({
+            sender: 'product-manager',
+            senderLabel: 'PM (Opus)',
+            content: pipeline.status === 'completed'
+              ? 'Pipeline concluida com sucesso! Todas as fases foram aprovadas.'
+              : 'Pipeline falhou. Verifique os erros nos logs dos agentes.',
+            type: 'info',
+          });
+
+          // On success, create feature branch + commit + PR
+          if (pipeline.status === 'completed') {
+            await this._pmGitFinalize(projectId, pipelineId);
+          }
+          break;
+        }
+
+        const phase = pipeline.phases[pipeline.currentPhase];
+        if (!phase) break;
+
+        if (phase.status === 'in-progress') {
+          // Run the phase agents
+          await this.runPhase(projectId, pipelineId);
+
+          // Re-read pipeline — PM task review may have reset tasks to pending
+          const updated = this._pipelines.get(projectId, pipelineId);
+          if (!updated) break;
+          const updPhase = updated.phases[updated.currentPhase];
+          if (!updPhase) break;
+
+          // Check for failed tasks — PM decides how to handle
+          const failedTasks = updPhase.tasks.filter(t => t.status === 'failed');
+          if (failedTasks.length > 0) {
+            const decision = await this._pmHandleFailedTasks(projectId, pipelineId, failedTasks);
+            if (decision === 'abort') {
+              // Mark pipeline as failed
+              const p = this._pipelines.get(projectId, pipelineId);
+              if (p) {
+                p.status = 'failed';
+                updPhase.status = 'failed';
+                this._pipelines.save(p);
+              }
+              this._chat.send({
+                sender: 'product-manager',
+                senderLabel: 'PM (Opus)',
+                content: 'Pipeline abortada pelo PM devido a falhas criticas.',
+                type: 'info',
+              });
+              break;
+            }
+            // decision === 'retry' — tasks were reset to pending, re-run
+            continue;
+          }
+
+          // Check for tasks PM rejected (reset to pending)
+          const pendingTasks = updPhase.tasks.filter(t => t.status === 'pending');
+          if (pendingTasks.length > 0) {
+            // Re-run the phase to process pending tasks
+            continue;
+          }
+
+          // After runPhase completes, the phase should be awaiting-approval or failed
+          // Continue the loop to check
+          continue;
+        }
+
+        if (phase.status === 'awaiting-approval') {
+          // PM reviews the phase
+          const review = await this._pmReviewPhase(projectId, pipelineId);
+
+          if (review.approved) {
+            // Approve and advance
+            const p = this._pipelines.approvePhase(projectId, pipelineId, 'product-manager');
+            if (!p) break;
+
+            this._chat.send({
+              sender: 'product-manager',
+              senderLabel: 'PM (Opus)',
+              content: `Fase **${phase.name}** aprovada pelo PM.${p.status === 'completed' ? '\n\nPipeline concluida!' : ''}`,
+              type: 'info',
+            });
+            this._onAgentStateChange.fire();
+
+            if (p.status === 'completed') {
+              await this._pmGitFinalize(projectId, pipelineId);
+              break;
+            }
+            if (p.status === 'failed') break;
+            // Next iteration will pick up the new in-progress phase
+            continue;
+          } else {
+            // Reject with feedback
+            this._pipelines.rejectPhase(projectId, pipelineId, review.feedback);
+
+            this._chat.send({
+              sender: 'product-manager',
+              senderLabel: 'PM (Opus)',
+              content: `Fase **${phase.name}** rejeitada. Agentes vao refazer com feedback:\n\n${review.feedback}`,
+              type: 'info',
+            });
+            this._onAgentStateChange.fire();
+            // Next iteration will re-run the phase (now in-progress again)
+            continue;
+          }
+        }
+
+        // Phase is in some other state (pending, completed, etc) — shouldn't happen, but break to be safe
+        break;
+      }
+    } catch (err: any) {
+      this._chat.send({
+        sender: 'system',
+        senderLabel: 'Pipeline',
+        content: `Erro no loop do PM: ${err.message}`,
+        type: 'error',
+      });
+    } finally {
+      if (this._activePipelineLoop === pipelineId) {
+        this._activePipelineLoop = null;
+      }
+      this._onAgentStateChange.fire();
+    }
+  }
+
+  // ─── Model rotation on rejection ────────────────────────
+
+  /** Pick a different model for an agent, preferring higher tiers. */
+  private _pickAlternativeModel(role: AgentRole, currentModel: string): string {
+    const tierRank: Record<string, number> = { premium: 4, code: 3, standard: 2, fast: 1 };
+    const candidates = AVAILABLE_MODELS
+      .filter(m => m.family !== currentModel && m.family !== 'claude-opus-4.6') // Never steal PM's model
+      .sort((a, b) => (tierRank[b.tier] || 0) - (tierRank[a.tier] || 0));
+
+    if (candidates.length === 0) return currentModel;
+
+    // Prefer a model from a different vendor for diversity
+    const currentVendorPrefix = currentModel.split('-')[0]; // e.g. "claude", "gpt", "gemini"
+    const diffVendor = candidates.find(m => !m.family.startsWith(currentVendorPrefix));
+    return (diffVendor || candidates[0]).family;
+  }
+
+  // ─── PM Individual Task Review ──────────────────────────
+
+  /**
+   * After each agent completes a task, PM evaluates the output.
+   * PM can approve the task or request a redo.
+   */
+  private async _pmTaskReview(
+    projectId: string,
+    pipelineId: string,
+    task: AgentTask,
+    agentRole: AgentRole,
+    output: string,
+  ): Promise<void> {
+    const pipeline = this._pipelines.get(projectId, pipelineId);
+    if (!pipeline) return;
+
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: `Revisando tarefa de ${AGENT_META[agentRole].label}: **${task.title}**...`,
+      type: 'info',
+    });
+
+    this._directInvocations.add('product-manager');
+    this._onAgentStateChange.fire();
+
+    try {
+      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4.6' });
+      if (!model) return; // Skip review if model unavailable
+
+      const prompt = `Voce e o Product Manager (PM) supervisando a pipeline: "${pipeline.objective}"
+
+## Agente: ${AGENT_META[agentRole].label}
+## Tarefa: ${task.title}
+## Descricao: ${task.description}
+
+## Output do agente (ultimos 6000 chars)
+${output.substring(output.length - 6000)}
+
+## Sua tarefa
+Avalie se o agente completou a tarefa adequadamente:
+1. O output atende a descricao da tarefa?
+2. O agente usou write_file para criar/modificar os arquivos necessarios?
+3. Ha erros graves ou omissoes criticas?
+
+Responda APENAS com JSON valido:
+{"approved": true, "summary": "Breve resumo do que foi feito"}
+ou
+{"approved": false, "feedback": "O que precisa ser corrigido"}
+
+Seja pragmatico — aprove se o trabalho e razoavel. Rejeite apenas se ha falhas criticas.`;
+
+      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+      const cts = new vscode.CancellationTokenSource();
+      const response = await model.sendRequest(messages, {}, cts.token);
+
+      let fullText = '';
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          fullText += part.value;
+        }
+      }
+      cts.dispose();
+
+      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return;
+
+      const result = JSON.parse(jsonMatch[0]);
+
+      if (result.approved) {
+        this._chat.send({
+          sender: 'product-manager',
+          senderLabel: 'PM (Opus)',
+          content: `Tarefa aprovada (${AGENT_META[agentRole].label}): ${result.summary || 'OK'}`,
+          type: 'info',
+        });
+      } else {
+        // PM rejects the individual task — switch the agent's model and retry
+        const config = loadAgentConfig();
+        const currentModel = getModelForAgent(agentRole, config);
+        const newModel = this._pickAlternativeModel(agentRole, currentModel);
+
+        if (newModel && newModel !== currentModel) {
+          config.models[agentRole] = newModel;
+          saveAgentConfig(config);
+        }
+
+        const modelMsg = newModel && newModel !== currentModel
+          ? `\nTrocando modelo: \`${currentModel}\` -> \`${newModel}\``
+          : '';
+
+        this._chat.send({
+          sender: 'product-manager',
+          senderLabel: 'PM (Opus)',
+          content: `Tarefa rejeitada (${AGENT_META[agentRole].label}): ${result.feedback}\n\nAgente vai refazer.${modelMsg}`,
+          type: 'info',
+        });
+
+        // Reset task to pending so the phase won't complete yet
+        const p = this._pipelines.get(projectId, pipelineId);
+        if (p) {
+          const phase = p.phases[p.currentPhase];
+          const t = phase?.tasks.find(tt => tt.id === task.id);
+          if (t) {
+            t.status = 'pending';
+            t.output = `[PM FEEDBACK] ${result.feedback}\n\n[OUTPUT ANTERIOR]\n${(t.output || '').substring(0, 2000)}`;
+            this._pipelines.save(p);
+          }
+        }
+      }
+    } catch (err: any) {
+      // On error, skip review — don't block the pipeline
+      this._chat.send({
+        sender: 'system',
+        senderLabel: 'System',
+        content: `Erro no review individual do PM: ${err.message}`,
+        type: 'error',
+      });
+    } finally {
+      this._directInvocations.delete('product-manager');
+      this._onAgentStateChange.fire();
+    }
+  }
+
+  // ─── PM Handle Failed/Missing Agents ────────────────────
+
+  /**
+   * PM evaluates failed tasks and decides: retry them or abort the pipeline.
+   * Returns 'retry' (tasks reset to pending) or 'abort'.
+   */
+  private async _pmHandleFailedTasks(
+    projectId: string,
+    pipelineId: string,
+    failedTasks: AgentTask[],
+  ): Promise<'retry' | 'abort'> {
+    const pipeline = this._pipelines.get(projectId, pipelineId);
+    if (!pipeline) return 'abort';
+
+    const phase = pipeline.phases[pipeline.currentPhase];
+    if (!phase) return 'abort';
+
+    const failedSummary = failedTasks
+      .map(t => `- **${AGENT_META[t.agent].label}** — ${t.title}: ${(t.output || 'sem output').substring(0, 1000)}`)
+      .join('\n');
+
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: `Detectei ${failedTasks.length} tarefa(s) com falha na fase **${phase.name}**. Avaliando...`,
+      type: 'info',
+    });
+
+    this._directInvocations.add('product-manager');
+    this._onAgentStateChange.fire();
+
+    try {
+      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4.6' });
+      if (!model) {
+        // Default: retry once
+        this._resetTasksToPending(pipeline, failedTasks);
+        return 'retry';
+      }
+
+      const prompt = `Voce e o Product Manager (PM) supervisando a pipeline: "${pipeline.objective}"
+
+## Fase atual: ${phase.name}
+## Tarefas com falha
+${failedSummary}
+
+## Tarefa
+Decida o que fazer com as tarefas que falharam:
+1. "retry" — Resetar as tarefas para tentar novamente (use se o erro parece transitorio ou o agente pode corrigir)
+2. "abort" — Abortar a pipeline (use APENAS se o erro e irrecuperavel e bloqueia tudo)
+
+Responda APENAS com JSON:
+{"decision": "retry", "reason": "Motivo"}
+ou
+{"decision": "abort", "reason": "Motivo"}
+
+Prefira "retry" na duvida. Aborte apenas em situacoes realmente irrecuperaveis.`;
+
+      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+      const cts = new vscode.CancellationTokenSource();
+      const response = await model.sendRequest(messages, {}, cts.token);
+
+      let fullText = '';
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          fullText += part.value;
+        }
+      }
+      cts.dispose();
+
+      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        this._resetTasksToPending(pipeline, failedTasks);
+        return 'retry';
+      }
+
+      const result = JSON.parse(jsonMatch[0]);
+
+      this._chat.send({
+        sender: 'product-manager',
+        senderLabel: 'PM (Opus)',
+        content: `Decisao do PM: **${result.decision}** — ${result.reason || ''}`,
+        type: 'info',
+      });
+
+      if (result.decision === 'abort') {
+        return 'abort';
+      }
+
+      // Retry: reset failed tasks
+      this._resetTasksToPending(pipeline, failedTasks);
+      return 'retry';
+    } catch (err: any) {
+      this._chat.send({
+        sender: 'system',
+        senderLabel: 'System',
+        content: `Erro no tratamento de falhas do PM: ${err.message}. Tentando retry.`,
+        type: 'error',
+      });
+      this._resetTasksToPending(pipeline, failedTasks);
+      return 'retry';
+    } finally {
+      this._directInvocations.delete('product-manager');
+      this._onAgentStateChange.fire();
+    }
+  }
+
+  private _resetTasksToPending(pipeline: Pipeline, tasks: AgentTask[]): void {
+    const phase = pipeline.phases[pipeline.currentPhase];
+    if (!phase) return;
+    for (const failed of tasks) {
+      const t = phase.tasks.find(tt => tt.id === failed.id);
+      if (t) {
+        t.status = 'pending';
+        t.output = `[RETRY] Erro anterior: ${(t.output || '').substring(0, 1000)}`;
+      }
+    }
+    phase.status = 'in-progress';
+    this._pipelines.save(pipeline);
+  }
+
+  // ─── PM Git Finalize ────────────────────────────────────
+
+  /**
+   * On pipeline completion, PM creates a feature branch, commits all changes, and opens a PR.
+   */
+  private async _pmGitFinalize(projectId: string, pipelineId: string): Promise<void> {
+    const pipeline = this._pipelines.get(projectId, pipelineId);
+    if (!pipeline) return;
+
+    const workspace = pipeline.workspace || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    if (!workspace) return;
+
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: 'Pipeline concluida. Iniciando workflow Git: criando branch, commit e PR...',
+      type: 'info',
+    });
+
+    this._directInvocations.add('product-manager');
+    this._onAgentStateChange.fire();
+
+    try {
+      const { execSync } = require('child_process');
+      const execOpts = { cwd: workspace, encoding: 'utf-8' as const, timeout: 30000 };
+
+      // Generate branch name from objective
+      const branchSlug = pipeline.objective
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .substring(0, 50);
+      const branchName = `feature/${branchSlug}-${pipelineId.substring(0, 8)}`;
+
+      // Check if git repo exists
+      try {
+        execSync('git rev-parse --is-inside-work-tree', execOpts);
+      } catch {
+        this._chat.send({
+          sender: 'product-manager',
+          senderLabel: 'PM (Opus)',
+          content: 'Workspace nao e um repositorio Git. Pulando workflow Git.',
+          type: 'info',
+        });
+        return;
+      }
+
+      // Get current branch for PR base
+      let baseBranch = 'main';
+      try {
+        baseBranch = execSync('git rev-parse --abbrev-ref HEAD', execOpts).trim();
+      } catch { /* use main */ }
+
+      // Create and checkout feature branch
+      try {
+        execSync(`git checkout -b ${branchName}`, execOpts);
+      } catch {
+        // Branch might exist, try switching
+        try {
+          execSync(`git checkout ${branchName}`, execOpts);
+        } catch (err: any) {
+          this._chat.send({
+            sender: 'product-manager',
+            senderLabel: 'PM (Opus)',
+            content: `Erro ao criar branch: ${err.message}`,
+            type: 'error',
+          });
+          return;
+        }
+      }
+
+      // Stage all changes
+      execSync('git add -A', execOpts);
+
+      // Check if there are changes to commit
+      const status = execSync('git status --porcelain', execOpts).trim();
+      if (!status) {
+        this._chat.send({
+          sender: 'product-manager',
+          senderLabel: 'PM (Opus)',
+          content: 'Nenhuma alteracao detectada para commit. Branch criada mas sem mudancas.',
+          type: 'info',
+        });
+        return;
+      }
+
+      // Commit
+      const commitMsg = `feat: ${pipeline.objective}\n\nPipeline ThinkCoffee (${pipelineId})\nFases: ${pipeline.phases.map(p => p.name).join(', ')}`;
+      execSync(`git commit -m ${JSON.stringify(commitMsg)}`, execOpts);
+
+      this._chat.send({
+        sender: 'product-manager',
+        senderLabel: 'PM (Opus)',
+        content: `Branch **${branchName}** criada com commit.\nBase: ${baseBranch}`,
+        type: 'info',
+      });
+
+      // Try to push and create PR
+      try {
+        execSync(`git push -u origin ${branchName}`, { ...execOpts, timeout: 60000 });
+
+        // Try GitHub CLI for PR creation
+        try {
+          const prTitle = `feat: ${pipeline.objective}`;
+          const prBody = `## Pipeline ThinkCoffee\n\n**Objetivo:** ${pipeline.objective}\n**Pipeline ID:** ${pipelineId}\n\n### Fases\n${pipeline.phases.map(p => `- ${p.name}: ${p.status}`).join('\n')}`;
+          execSync(
+            `gh pr create --title ${JSON.stringify(prTitle)} --body ${JSON.stringify(prBody)} --base ${baseBranch}`,
+            { ...execOpts, timeout: 60000 },
+          );
+
+          this._chat.send({
+            sender: 'product-manager',
+            senderLabel: 'PM (Opus)',
+            content: `PR criado com sucesso! Branch: **${branchName}** -> ${baseBranch}`,
+            type: 'info',
+          });
+        } catch {
+          this._chat.send({
+            sender: 'product-manager',
+            senderLabel: 'PM (Opus)',
+            content: `Push feito. PR nao criado automaticamente (gh CLI nao disponivel). Crie manualmente: **${branchName}** -> ${baseBranch}`,
+            type: 'info',
+          });
+        }
+      } catch (pushErr: any) {
+        this._chat.send({
+          sender: 'product-manager',
+          senderLabel: 'PM (Opus)',
+          content: `Branch e commit criados localmente. Push falhou: ${pushErr.message}\n\nExecute manualmente:\n\`git push -u origin ${branchName}\``,
+          type: 'info',
+        });
+      }
+    } catch (err: any) {
+      this._chat.send({
+        sender: 'product-manager',
+        senderLabel: 'PM (Opus)',
+        content: `Erro no workflow Git: ${err.message}`,
+        type: 'error',
+      });
+    } finally {
+      this._directInvocations.delete('product-manager');
+      this._onAgentStateChange.fire();
+    }
+  }
+
+  // ─── PM Phase Review ────────────────────────────────────
+
+  private async _pmReviewPhase(
+    projectId: string,
+    pipelineId: string,
+  ): Promise<{ approved: boolean; feedback: string }> {
+    const pipeline = this._pipelines.get(projectId, pipelineId);
+    if (!pipeline) return { approved: true, feedback: '' };
+
+    const phase = pipeline.phases[pipeline.currentPhase];
+    if (!phase) return { approved: true, feedback: '' };
+
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: `Revisando fase **${phase.name}**...`,
+      type: 'info',
+    });
+
+    this._directInvocations.add('product-manager');
+    this._onAgentStateChange.fire();
+
+    try {
+      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4.6' });
+      if (!model) {
+        this._chat.send({
+          sender: 'system', senderLabel: 'System',
+          content: 'claude-opus-4.6 indisponivel para review. Auto-aprovando fase.',
+          type: 'error',
+        });
+        return { approved: true, feedback: '' };
+      }
+
+      // Collect outputs from this phase
+      const outputs = phase.tasks.map(t =>
+        `### ${AGENT_META[t.agent].label} — ${t.title}\nStatus: ${t.status}\n${t.output ? t.output.substring(0, 4000) : '(sem output)'}`
+      ).join('\n\n');
+
+      // Collect objective and prior context
+      const priorPhases = pipeline.phases
+        .filter((_, i) => i < pipeline.currentPhase)
+        .map(p => `- **${p.name}**: ${p.status}`)
+        .join('\n');
+
+      const prompt = `Voce e o Product Manager (PM) do time ThinkCoffee.
+Voce esta supervisando a pipeline: "${pipeline.objective}"
+
+## Fase atual: ${phase.name} (fase ${pipeline.currentPhase + 1} de ${pipeline.phases.length})
+Agentes: ${phase.agents.map(a => AGENT_META[a].label).join(', ')}
+
+## Fases anteriores
+${priorPhases || '(nenhuma)'}
+
+## Outputs dos agentes nesta fase
+${outputs}
+
+## Sua tarefa
+Avalie os outputs dos agentes desta fase. Verifique:
+1. Os outputs atendem ao objetivo da pipeline?
+2. A qualidade do trabalho e aceitavel?
+3. Os arquivos foram criados/modificados corretamente?
+4. Ha erros, omissoes ou inconsistencias?
+
+## Formato de resposta
+Responda APENAS com JSON valido (sem markdown), no formato:
+{"approved": true}
+ou
+{"approved": false, "feedback": "Explicacao detalhada do que precisa ser corrigido ou melhorado."}
+
+Se os outputs estiverem razoaveis e cumprirem o minimo necessario, APROVE. Rejeite apenas se houver problemas claros.
+NAO seja excessivamente exigente — foque em bloqueios reais.`;
+
+      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+      const cts = new vscode.CancellationTokenSource();
+      const response = await model.sendRequest(messages, {}, cts.token);
+
+      let fullText = '';
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          fullText += part.value;
+        }
+      }
+      cts.dispose();
+
+      // Parse JSON
+      const jsonMatch = fullText.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        this._chat.send({
+          sender: 'product-manager', senderLabel: 'PM (Opus)',
+          content: 'Nao consegui gerar review estruturado. Aprovando fase.',
+          type: 'info',
+        });
+        return { approved: true, feedback: '' };
+      }
+
+      const result = JSON.parse(jsonMatch[0]);
+      return {
+        approved: !!result.approved,
+        feedback: result.feedback || '',
+      };
+
+    } catch (err: any) {
+      this._chat.send({
+        sender: 'system', senderLabel: 'System',
+        content: `Erro na review do PM: ${err.message}. Auto-aprovando.`,
+        type: 'error',
+      });
+      return { approved: true, feedback: '' };
+    } finally {
+      this._directInvocations.delete('product-manager');
+      this._onAgentStateChange.fire();
+    }
   }
 }
 

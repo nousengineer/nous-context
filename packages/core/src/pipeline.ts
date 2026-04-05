@@ -238,6 +238,11 @@ export class PipelineService {
     return loadPipeline(projectId, pipelineId);
   }
 
+  /** Persist a pipeline object to disk */
+  save(pipeline: Pipeline): void {
+    savePipeline(pipeline);
+  }
+
   /** List all pipelines for a project */
   list(projectId: string): Pipeline[] {
     const dir = getPipelinesDir(projectId);

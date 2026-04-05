@@ -119,42 +119,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Switch to the active pipeline chat
     this._switchToPipeline(active.id);
 
+    // If PM loop is already running, skip
+    if (this._agentService.isPipelineLoopActive(active.id)) return;
+
+    // Reset stale tasks if phase was interrupted mid-execution
     if (currentPhase.status === 'in-progress') {
-      // Phase was in-progress when VS Code closed — reset stale tasks and re-run
       this._pipelines.resetStaleTasks(project.id, active.id);
-
-      this._activeChat.send({
-        sender: 'system',
-        senderLabel: 'Pipeline',
-        content: `Retomando pipeline: **${active.objective}**\nFase atual: **${currentPhase.name}** (${currentPhase.agents.map(a => AGENT_META[a].label).join(', ')})`,
-        type: 'info',
-      });
-
-      const config = loadAgentConfig();
-      if (config.mode === 'auto') {
-        await this._agentService.autoAssignModels(active);
-      }
-      this._agentService.runPhase(project.id, active.id);
-
-    } else if (currentPhase.status === 'awaiting-approval' && this._autoApprove) {
-      // Was awaiting approval — auto-approve and continue
-      this._activeChat.send({
-        sender: 'system',
-        senderLabel: 'Pipeline',
-        content: `Retomando pipeline: **${active.objective}**\nFase **${currentPhase.name}** aguardava aprovacao — auto-aprovando.`,
-        type: 'info',
-      });
-      this._approvePhase();
-    } else if (currentPhase.status === 'awaiting-approval') {
-      // Awaiting approval but auto-approve is off — just show state
-      this._activeChat.send({
-        sender: 'system',
-        senderLabel: 'Pipeline',
-        content: `Pipeline ativa: **${active.objective}**\nFase **${currentPhase.name}** aguardando aprovacao.`,
-        type: 'info',
-      });
-      this._sendState();
     }
+
+    this._activeChat.send({
+      sender: 'system',
+      senderLabel: 'Pipeline',
+      content: `Retomando pipeline: **${active.objective}**\nFase atual: **${currentPhase.name}** (${currentPhase.status})`,
+      type: 'info',
+    });
+
+    const config = loadAgentConfig();
+    if (config.mode === 'auto') {
+      await this._agentService.autoAssignModels(active);
+    }
+
+    // Start PM oversight loop — PM will handle everything from here
+    this._agentService.runPipeline(project.id, active.id);
   }
 
   /** Expose active chat for AgentService to write to */
@@ -486,13 +472,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // Switch to the new pipeline chat
     this._switchToPipeline(p.id);
 
-    // Auto-run the first phase
+    // Start PM oversight loop (auto-runs all phases)
     if (this._agentService) {
       const config = loadAgentConfig();
       if (config.mode === 'auto') {
         await this._agentService.autoAssignModels(p);
       }
-      this._agentService.runPhase(project.id, p.id);
+      this._agentService.runPipeline(project.id, p.id);
     }
   }
 
@@ -528,11 +514,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     });
     this._sendState();
 
-    // Auto-run the next phase if pipeline is still active
+    // If PM loop is not active, restart it
     if (p.status !== 'completed' && p.status !== 'failed' && this._agentService) {
-      const nextPhase = p.phases[p.currentPhase];
-      if (nextPhase && nextPhase.status === 'in-progress') {
-        this._agentService.runPhase(project.id, active.id);
+      if (!this._agentService.isPipelineLoopActive(active.id)) {
+        this._agentService.runPipeline(project.id, active.id);
       }
     }
   }
@@ -567,6 +552,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'info',
     });
     this._sendState();
+
+    // Restart PM loop if not active
+    if (this._agentService && !this._agentService.isPipelineLoopActive(active.id)) {
+      this._agentService.runPipeline(project.id, active.id);
+    }
   }
 
   private _showPipelineStatus() {
