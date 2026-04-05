@@ -1,6 +1,4 @@
-import rateLimit, { Store } from 'express-rate-limit';
-import RedisStore from 'rate-limit-redis';
-import redis from 'redis';
+import rateLimit from 'express-rate-limit';
 
 /**
  * In-memory store for development

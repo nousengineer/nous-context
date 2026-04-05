@@ -25,6 +25,6 @@ export class ApiKey {
   @CreateDateColumn()
   createdAt: Date;
 
-  @Column('timestamp', { nullable: true })
-  revokedAt: Date;
+  @Column('datetime', { nullable: true })
+  revokedAt: Date | null;
 }

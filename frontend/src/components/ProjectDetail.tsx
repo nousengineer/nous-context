@@ -1,9 +1,19 @@
 import React, { useState } from 'react';
-import { useQuery, gql } from '@apollo/client';
+import { useQuery, useMutation, gql } from '@apollo/client';
 import ContextEntryList from './ContextEntryList';
 import DecisionList from './DecisionList';
 import CreateContextForm from './CreateContextForm';
 import CreateDecisionForm from './CreateDecisionForm';
+import ApiKeyManager from './ApiKeyManager';
+import ContextExport from './ContextExport';
+import DeleteButton from './DeleteButton';
+import ContextSearch from './ContextSearch';
+
+const DELETE_PROJECT = gql`
+  mutation DeleteProject($id: ID!) {
+    deleteProject(id: $id)
+  }
+`;
 
 const GET_PROJECT_DETAIL = gql`
   query GetProjectDetail($id: ID!) {
@@ -29,6 +39,14 @@ const GET_PROJECT_DETAIL = gql`
         status
         createdAt
       }
+      apiKeys {
+        id
+        name
+        isActive
+        lastUsed
+        createdAt
+        revokedAt
+      }
     }
   }
 `;
@@ -37,12 +55,16 @@ interface ProjectDetailProps {
   projectId: string;
 }
 
-type Tab = 'context' | 'decisions';
+type Tab = 'context' | 'decisions' | 'api-keys' | 'export';
 
 export default function ProjectDetail({ projectId }: ProjectDetailProps) {
   const [activeTab, setActiveTab] = useState<Tab>('context');
   const [showContextForm, setShowContextForm] = useState(false);
   const [showDecisionForm, setShowDecisionForm] = useState(false);
+  const [filteredContextEntries, setFilteredContextEntries] = useState<any[]>([]);
+  const [deleteProject] = useMutation(DELETE_PROJECT, {
+    refetchQueries: ['GetProjects'],
+  });
   const { data, loading, error } = useQuery(GET_PROJECT_DETAIL, {
     variables: { id: projectId },
   });
@@ -57,11 +79,20 @@ export default function ProjectDetail({ projectId }: ProjectDetailProps) {
     <div className="space-y-6">
       {/* Project Header */}
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-6">
-        <h2 className="text-2xl font-bold mb-2">{project.name}</h2>
-        {project.description && <p className="text-slate-300 mb-4">{project.description}</p>}
-        <div className="flex items-center gap-4 text-sm text-slate-400">
-          <span>Status: {project.status}</span>
-          <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex-1">
+            <h2 className="text-2xl font-bold mb-2">{project.name}</h2>
+            {project.description && <p className="text-slate-300 mb-4">{project.description}</p>}
+            <div className="flex items-center gap-4 text-sm text-slate-400">
+              <span>Status: {project.status}</span>
+              <span>Created: {new Date(project.createdAt).toLocaleDateString()}</span>
+            </div>
+          </div>
+          <DeleteButton
+            itemName={project.name}
+            onDelete={() => deleteProject({ variables: { id: project.id } })}
+            variant="danger"
+          />
         </div>
       </div>
 
@@ -87,6 +118,26 @@ export default function ProjectDetail({ projectId }: ProjectDetailProps) {
         >
           Decisions ({project.decisions.length})
         </button>
+        <button
+          onClick={() => setActiveTab('api-keys')}
+          className={`px-4 py-2 font-medium border-b-2 transition ${
+            activeTab === 'api-keys'
+              ? 'border-blue-500 text-blue-400'
+              : 'border-transparent text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          API Keys
+        </button>
+        <button
+          onClick={() => setActiveTab('export')}
+          className={`px-4 py-2 font-medium border-b-2 transition ${
+            activeTab === 'export'
+              ? 'border-blue-500 text-blue-400'
+              : 'border-transparent text-slate-400 hover:text-slate-300'
+          }`}
+        >
+          Export Context
+        </button>
       </div>
 
       {/* Tab Content */}
@@ -109,7 +160,12 @@ export default function ProjectDetail({ projectId }: ProjectDetailProps) {
             />
           )}
 
-          <ContextEntryList entries={project.contextEntries} />
+          <ContextSearch
+            entries={project.contextEntries}
+            onFilter={setFilteredContextEntries}
+          />
+
+          <ContextEntryList entries={filteredContextEntries.length > 0 ? filteredContextEntries : project.contextEntries} />
         </div>
       )}
 
@@ -134,6 +190,18 @@ export default function ProjectDetail({ projectId }: ProjectDetailProps) {
 
           <DecisionList decisions={project.decisions} />
         </div>
+      )}
+
+      {activeTab === 'api-keys' && (
+        <ApiKeyManager projectId={projectId} />
+      )}
+
+      {activeTab === 'export' && (
+        <ContextExport 
+          project={project}
+          contextEntries={project.contextEntries}
+          decisions={project.decisions}
+        />
       )}
     </div>
   );

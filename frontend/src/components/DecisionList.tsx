@@ -1,4 +1,12 @@
 import React from 'react';
+import { useMutation, gql } from '@apollo/client';
+import DeleteButton from './DeleteButton';
+
+const DELETE_DECISION = gql`
+  mutation DeleteDecision($id: ID!) {
+    deleteDecision(id: $id)
+  }
+`;
 
 interface Decision {
   id: string;
@@ -10,9 +18,19 @@ interface Decision {
 
 interface DecisionListProps {
   decisions: Decision[];
+  onDelete?: () => void;
 }
 
-export default function DecisionList({ decisions }: DecisionListProps) {
+export default function DecisionList({ decisions, onDelete }: DecisionListProps) {
+  const [deleteDecision] = useMutation(DELETE_DECISION, {
+    refetchQueries: ['GetProjectDetail'],
+  });
+
+  const handleDelete = async (id: string) => {
+    await deleteDecision({ variables: { id } });
+    onDelete?.();
+  };
+
   if (decisions.length === 0) {
     return (
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 text-center">
@@ -32,9 +50,16 @@ export default function DecisionList({ decisions }: DecisionListProps) {
                 {decision.status}
               </span>
             </div>
-            <span className="text-xs text-slate-300 opacity-75">
-              {new Date(decision.createdAt).toLocaleDateString()}
-            </span>
+            <div className="flex items-start gap-3">
+              <span className="text-xs text-slate-300 opacity-75 whitespace-nowrap">
+                {new Date(decision.createdAt).toLocaleDateString()}
+              </span>
+              <DeleteButton
+                itemName={decision.title}
+                onDelete={() => handleDelete(decision.id)}
+                variant="small"
+              />
+            </div>
           </div>
           <p className="text-slate-100 mt-2">{decision.description}</p>
         </div>

@@ -14,14 +14,14 @@ export const resolvers = {
   Query: {
     projects: async () => {
       return await projectRepository.find({
-        relations: ['contextEntries', 'decisions', 'apiKeys']
+        relations: ['contextEntries', 'decisions']
       });
     },
 
     project: async (_, { id }) => {
       return await projectRepository.findOne({
         where: { id },
-        relations: ['contextEntries', 'decisions', 'apiKeys']
+        relations: ['contextEntries', 'decisions']
       });
     },
 
@@ -64,7 +64,7 @@ export const resolvers = {
       await projectRepository.update(id, { name, description, status });
       return await projectRepository.findOne({
         where: { id },
-        relations: ['contextEntries', 'decisions', 'apiKeys']
+        relations: ['contextEntries', 'decisions']
       });
     },
 
@@ -169,6 +169,36 @@ export const resolvers = {
       await apiKeyRepository.save(apiKey);
 
       return true;
+    },
+
+    deleteProject: async (_, { id }) => {
+      const project = await projectRepository.findOne({ where: { id } });
+      if (!project) {
+        throw new Error('Project not found');
+      }
+
+      await projectRepository.remove(project);
+      return true;
+    },
+
+    deleteContextEntry: async (_, { id }) => {
+      const entry = await contextEntryRepository.findOne({ where: { id } });
+      if (!entry) {
+        throw new Error('Context entry not found');
+      }
+
+      await contextEntryRepository.remove(entry);
+      return true;
+    },
+
+    deleteDecision: async (_, { id }) => {
+      const decision = await decisionRepository.findOne({ where: { id } });
+      if (!decision) {
+        throw new Error('Decision not found');
+      }
+
+      await decisionRepository.remove(decision);
+      return true;
     }
   },
 
@@ -183,6 +213,15 @@ export const resolvers = {
         }, {});
       }
       return null;
+    }
+  },
+
+  Project: {
+    apiKeys: async (project) => {
+      return await apiKeyRepository.find({
+        where: { project: { id: project.id }, revokedAt: null },
+        order: { createdAt: 'DESC' }
+      });
     }
   }
 };

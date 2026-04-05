@@ -1,4 +1,4 @@
-import { gql } from 'apollo-server';
+import { gql } from 'graphql-tag';
 
 export const typeDefs = gql`
   type Project {
@@ -103,6 +103,10 @@ export const typeDefs = gql`
     revokeApiKey(
       keyId: ID!
     ): Boolean!
+
+    deleteProject(id: ID!): Boolean!
+    deleteContextEntry(id: ID!): Boolean!
+    deleteDecision(id: ID!): Boolean!
   }
 
   scalar JSON

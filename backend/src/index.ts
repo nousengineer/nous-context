@@ -12,6 +12,7 @@ import { AppDataSource } from './data-source';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { graphqlRateLimiter } from './middleware/rateLimiter';
+import { exportProjectContext } from './routes/export';
 
 async function startServer() {
   // Initialize database
@@ -65,6 +66,9 @@ async function startServer() {
       environment: process.env.NODE_ENV
     });
   });
+
+  // Context export endpoint
+  app.get('/api/projects/:projectId/export', exportProjectContext as any);
 
   const PORT = process.env.PORT || 4000;
 

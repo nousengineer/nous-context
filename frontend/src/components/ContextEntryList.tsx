@@ -1,4 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useMutation, gql } from '@apollo/client';
+import DeleteButton from './DeleteButton';
+
+const DELETE_CONTEXT_ENTRY = gql`
+  mutation DeleteContextEntry($id: ID!) {
+    deleteContextEntry(id: $id)
+  }
+`;
 
 interface ContextEntry {
   id: string;
@@ -11,6 +19,7 @@ interface ContextEntry {
 
 interface ContextEntryListProps {
   entries: ContextEntry[];
+  onDelete?: () => void;
 }
 
 const categoryColors = {
@@ -21,7 +30,16 @@ const categoryColors = {
   general: 'bg-slate-700',
 };
 
-export default function ContextEntryList({ entries }: ContextEntryListProps) {
+export default function ContextEntryList({ entries, onDelete }: ContextEntryListProps) {
+  const [deleteContextEntry] = useMutation(DELETE_CONTEXT_ENTRY, {
+    refetchQueries: ['GetProjectDetail'],
+  });
+
+  const handleDelete = async (id: string) => {
+    await deleteContextEntry({ variables: { id } });
+    onDelete?.();
+  };
+
   if (entries.length === 0) {
     return (
       <div className="bg-slate-800 rounded-lg border border-slate-700 p-6 text-center">
@@ -48,9 +66,16 @@ export default function ContextEntryList({ entries }: ContextEntryListProps) {
                 {entry.category}
               </span>
             </div>
-            <span className="text-xs text-slate-300 opacity-75">
-              {new Date(entry.createdAt).toLocaleDateString()}
-            </span>
+            <div className="flex items-start gap-3">
+              <span className="text-xs text-slate-300 opacity-75 whitespace-nowrap">
+                {new Date(entry.createdAt).toLocaleDateString()}
+              </span>
+              <DeleteButton
+                itemName={entry.key}
+                onDelete={() => handleDelete(entry.id)}
+                variant="small"
+              />
+            </div>
           </div>
           <p className="text-slate-100 mt-2 whitespace-pre-wrap">{entry.value}</p>
           <div className="mt-2 text-xs text-slate-300">Priority: {entry.priority}</div>

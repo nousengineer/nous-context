@@ -23,5 +23,9 @@
     "backend",
     "frontend",
     "shared"
-  ]
+  ],
+  "dependencies": {
+    "@apollo/protobufjs": "^1.2.7",
+    "caniuse-lite": "^1.0.30001785"
+  }
 }
