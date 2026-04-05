@@ -105,6 +105,26 @@
       {
         "command": "thinkcoffee.openOtherProject",
         "title": "ThinkCoffee: Open Other Project"
+      },
+      {
+        "command": "thinkcoffee.configureAgentModels",
+        "title": "ThinkCoffee: Configure Agent Models"
+      },
+      {
+        "command": "thinkcoffee.runPhase",
+        "title": "ThinkCoffee: Run Current Phase (Start Agents)"
+      },
+      {
+        "command": "thinkcoffee.stopAgents",
+        "title": "ThinkCoffee: Stop All Agents"
+      },
+      {
+        "command": "thinkcoffee.invokeAgent",
+        "title": "ThinkCoffee: Invoke Agent"
+      },
+      {
+        "command": "thinkcoffee.viewAgentModels",
+        "title": "ThinkCoffee: View Agent Models"
       }
     ],
     "menus": {
@@ -129,6 +149,16 @@
       "view/title": [
         {
           "command": "thinkcoffee.createPipeline",
+          "when": "view == thinkcoffee.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "thinkcoffee.runPhase",
+          "when": "view == thinkcoffee.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "thinkcoffee.stopAgents",
           "when": "view == thinkcoffee.chat",
           "group": "navigation"
         },

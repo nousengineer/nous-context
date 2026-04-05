@@ -6,7 +6,7 @@ import crypto from 'crypto';
 export interface ChatMessage {
   id: string;
   timestamp: string;
-  sender: 'programmer' | 'claude' | 'copilot' | 'github-cli' | 'terminal' | 'system';
+  sender: string;
   senderLabel?: string;
   content: string;
   /** Optional: which project this relates to */
@@ -17,6 +17,8 @@ export interface ChatMessage {
   replyTo?: string;
   /** Whether external AIs have seen this message */
   read?: boolean;
+  /** @mentions in this message (agent roles to trigger) */
+  mentions?: string[];
 }
 
 function getChatDir(): string {

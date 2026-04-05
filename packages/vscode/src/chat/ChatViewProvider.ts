@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { ChatService, PipelineService, ContextService, DecisionService, AGENT_META } from '@thinkcoffee/core';
+import { ChatService, PipelineService, ContextService, DecisionService, AGENT_META, loadAgentConfig, DEFAULT_AGENT_MODELS } from '@thinkcoffee/core';
 import type { ChatMessage, Pipeline, AgentRole } from '@thinkcoffee/core';
+import type { AgentService } from '../agents/AgentService';
 import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -19,6 +20,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _contexts: ContextService;
   private _decisions: DecisionService;
   private _getProject: () => ActiveProjectRef | null;
+  private _agentService: AgentService | null = null;
   private _stopWatch: (() => void) | null = null;
   private _pipelineRefreshTimer?: ReturnType<typeof setInterval>;
 
@@ -35,6 +37,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     this._contexts = contexts;
     this._decisions = decisions;
     this._getProject = getProject;
+  }
+
+  setAgentService(service: AgentService) {
+    this._agentService = service;
+    service.onAgentStateChange(() => this._sendState());
   }
 
   resolveWebviewView(
@@ -85,6 +92,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const msgs = this._chat.getHistory(200);
     const project = this._getProject();
     const pipeline = project ? this._pipelines.getActive(project.id) : null;
+    const runningAgents = this._agentService ? this._agentService.getRunning() : [];
     this._view.webview.postMessage({
       command: 'state',
       data: {
@@ -92,6 +100,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         pipeline: pipeline ? this._serializePipeline(pipeline) : null,
         project: project ? { id: project.id, name: project.name } : null,
         agents: AGENT_META,
+        runningAgents,
+        modelConfig: loadAgentConfig(),
       },
     });
   }
@@ -138,6 +148,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const trimmed = text.trim();
     if (!trimmed) return;
 
+    // Agent @mentions: @product-manager, @architect, @backend, etc.
+    const agentRoles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+    const agentMatch = trimmed.match(/^@([\w-]+)\s+([\s\S]+)/);
+    if (agentMatch) {
+      const target = agentMatch[1];
+      const message = agentMatch[2];
+
+      // Check if it's an agent role
+      if (agentRoles.includes(target as AgentRole)) {
+        this._chat.send({
+          sender: 'programmer',
+          senderLabel: 'You',
+          content: trimmed,
+          type: 'request',
+          mentions: [target],
+        });
+        this._sendState();
+        if (this._agentService) {
+          this._agentService.invokeAgent(target as AgentRole, message);
+        }
+        return;
+      }
+      // Also support short names: @pm, @ar, @be, @fe, @do, @qa, @cr
+      const shortMap: Record<string, AgentRole> = {
+        pm: 'product-manager', ar: 'architect', be: 'backend',
+        fe: 'frontend', do: 'devops', qa: 'qa', cr: 'code-review',
+      };
+      if (shortMap[target]) {
+        this._chat.send({
+          sender: 'programmer',
+          senderLabel: 'You',
+          content: trimmed,
+          type: 'request',
+          mentions: [shortMap[target]],
+        });
+        this._sendState();
+        if (this._agentService) {
+          this._agentService.invokeAgent(shortMap[target], message);
+        }
+        return;
+      }
+    }
+
     if (trimmed.startsWith('@gh ')) {
       await this._handleGitHub(trimmed.slice(4));
     } else if (trimmed.startsWith('@terminal ')) {
@@ -152,6 +205,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       await this._rejectPhase(trimmed.slice(8));
     } else if (trimmed === '/status') {
       this._showPipelineStatus();
+    } else if (trimmed === '/run') {
+      await this._runCurrentPhase();
+    } else if (trimmed === '/stop') {
+      this._stopAllAgents();
+    } else if (trimmed === '/models') {
+      this._showModels();
+    } else if (trimmed === '/agents') {
+      this._showRunningAgents();
     } else {
       // Regular message
       this._chat.send({
@@ -162,6 +223,52 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       });
       this._sendState();
     }
+  }
+
+  // ─── Agent commands ────────────────────────────────────────
+
+  private async _runCurrentPhase() {
+    const project = this._getProject();
+    if (!project) { this._systemMsg('Nenhum projeto ativo.', 'error'); return; }
+    const active = this._pipelines.getActive(project.id);
+    if (!active) { this._systemMsg('Nenhum pipeline ativo. Use `/pipeline <objetivo>`.', 'info'); return; }
+    const phase = active.phases[active.currentPhase];
+    if (!phase || phase.status !== 'in-progress') {
+      this._systemMsg('Fase atual nao esta em andamento. Talvez precise aprovar a fase anterior.', 'info');
+      return;
+    }
+    if (!this._agentService) { this._systemMsg('AgentService nao inicializado.', 'error'); return; }
+    this._agentService.runPhase(project.id, active.id);
+  }
+
+  private _stopAllAgents() {
+    if (!this._agentService) return;
+    this._agentService.stopAll();
+    this._systemMsg('Todos os agentes foram parados.', 'info');
+  }
+
+  private _showModels() {
+    const config = loadAgentConfig();
+    const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+    const lines = roles.map(r => {
+      const model = config.models[r] || DEFAULT_AGENT_MODELS[r];
+      const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
+      return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
+    });
+    this._systemMsg(`Modelos (modo: **${config.mode}**):\n\n${lines.join('\n')}`, 'info');
+  }
+
+  private _showRunningAgents() {
+    if (!this._agentService) return;
+    const running = this._agentService.getRunning();
+    if (running.length === 0) {
+      this._systemMsg('Nenhum agente rodando.', 'info');
+      return;
+    }
+    const lines = running.map(r =>
+      `- **${AGENT_META[r.role].label}**: ${Math.round(r.elapsed / 1000)}s`
+    );
+    this._systemMsg(`Agentes em execucao:\n\n${lines.join('\n')}`, 'info');
   }
 
   // ─── Pipeline actions ──────────────────────────────────────
@@ -427,6 +534,46 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .btn-reject { background: #ef4444; color: #fff; }
   .btn-reject:hover { background: #dc2626; }
 
+  /* ─── Running Agents Banner ────────────────────────────── */
+  .agents-bar {
+    display: none;
+    padding: 4px 10px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background: color-mix(in srgb, #3b82f6 8%, var(--vscode-editor-background));
+    font-size: 10px;
+    flex-shrink: 0;
+    gap: 6px;
+    align-items: center;
+  }
+  .agents-bar.active { display: flex; }
+  .agents-bar .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #3b82f6;
+    animation: pulse 1.2s infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .agents-bar .agent-chips {
+    display: flex; gap: 4px; flex-wrap: wrap; flex: 1;
+  }
+  .agents-bar .chip {
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-weight: 600;
+    font-size: 9px;
+  }
+  .agents-bar .stop-btn {
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid #ef4444;
+    background: transparent;
+    color: #ef4444;
+    font-size: 9px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .agents-bar .stop-btn:hover { background: #ef444433; }
+
   /* ─── Messages ─────────────────────────────────────────── */
   .messages {
     flex: 1;
@@ -644,15 +791,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <button class="btn-reject" id="rejectBtn">Reject</button>
   </div>
 
+  <div class="agents-bar" id="agentsBar">
+    <div class="dot"></div>
+    <div class="agent-chips" id="agentChips"></div>
+    <button class="stop-btn" id="stopAgentsBtn">Stop</button>
+  </div>
+
   <div class="messages" id="messages">
     <div class="empty" id="emptyState">
       <h3>ThinkCoffee Agents</h3>
       <p>Multi-agent pipeline for your project.<br>Chat with agents, create pipelines, approve phases.</p>
       <div class="quick-actions">
         <button onclick="insertCmd('/pipeline ')">New Pipeline</button>
-        <button onclick="insertCmd('/status')">Pipeline Status</button>
-        <button onclick="insertCmd('@files list ')">List Files</button>
-        <button onclick="insertCmd('@terminal ')">Run Command</button>
+        <button onclick="insertCmd('/run')">Run Phase</button>
+        <button onclick="insertCmd('/models')">View Models</button>
+        <button onclick="insertCmd('@pm ')">Ask PM</button>
+        <button onclick="insertCmd('@ar ')">Ask Architect</button>
+        <button onclick="insertCmd('/status')">Status</button>
       </div>
     </div>
   </div>
@@ -666,12 +821,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     </div>
     <div class="hints">
       <strong>/pipeline</strong> create &bull;
+      <strong>/run</strong> start &bull;
       <strong>/approve</strong> &bull;
       <strong>/reject</strong> &bull;
-      <strong>/status</strong> &bull;
-      <strong>@gh</strong> &bull;
-      <strong>@terminal</strong> &bull;
-      <strong>@files</strong>
+      <strong>/models</strong> &bull;
+      <strong>/agents</strong> &bull;
+      <strong>/stop</strong> &bull;
+      <strong>@pm</strong> <strong>@ar</strong> <strong>@be</strong> <strong>@fe</strong> <strong>@qa</strong> <strong>@cr</strong>
     </div>
   </div>
 
@@ -690,6 +846,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const approvalLabel = document.getElementById('approvalLabel');
   const approveBtn = document.getElementById('approveBtn');
   const rejectBtn = document.getElementById('rejectBtn');
+  const agentsBar = document.getElementById('agentsBar');
+  const agentChips = document.getElementById('agentChips');
+  const stopAgentsBtn = document.getElementById('stopAgentsBtn');
 
   let currentAgents = {};
 
@@ -829,6 +988,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const fb = prompt('Feedback for agents:');
     if (fb) vscode.postMessage({ command: 'reject', feedback: fb });
   });
+  stopAgentsBtn.addEventListener('click', () => vscode.postMessage({ command: 'send', text: '/stop' }));
+
+  function renderRunningAgents(running) {
+    if (!running || running.length === 0) {
+      agentsBar.classList.remove('active');
+      return;
+    }
+    agentsBar.classList.add('active');
+    agentChips.innerHTML = '';
+    for (const r of running) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      const color = AGENT_COLORS[r.role] || '#9ca3af';
+      chip.style.background = color + '33';
+      chip.style.color = color;
+      const secs = Math.round(r.elapsed / 1000);
+      chip.textContent = (AGENT_INITIALS[r.role] || '??') + ' ' + secs + 's';
+      agentChips.appendChild(chip);
+    }
+  }
 
   window.addEventListener('message', (e) => {
     const msg = e.data;
@@ -836,6 +1015,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       if (msg.data.agents) currentAgents = msg.data.agents;
       renderPipeline(msg.data.pipeline);
       renderMessages(msg.data.messages);
+      renderRunningAgents(msg.data.runningAgents);
     } else if (msg.command === 'pipeline') {
       renderPipeline(msg.data);
     }

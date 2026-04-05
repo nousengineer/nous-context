@@ -10,9 +10,15 @@ import {
   ChatService,
   PipelineService,
   AGENT_META,
+  loadAgentConfig,
+  saveAgentConfig,
+  setAgentModel,
+  AVAILABLE_MODELS,
+  DEFAULT_AGENT_MODELS,
 } from '@thinkcoffee/core';
-import type { Project } from '@thinkcoffee/core';
+import type { Project, AgentRole } from '@thinkcoffee/core';
 import { ChatViewProvider } from './chat/ChatViewProvider';
+import { AgentService } from './agents/AgentService';
 import fs from 'fs';
 import path from 'path';
 
@@ -20,6 +26,7 @@ let projectService: ProjectService;
 let contextService: ContextService;
 let decisionService: DecisionService;
 let pipelineService: PipelineService;
+let agentService: AgentService;
 
 /** The project bound to the current workspace (auto-created on activate) */
 let activeProject: Project | null = null;
@@ -109,6 +116,17 @@ export async function activate(context: vscode.ExtensionContext) {
       webviewOptions: { retainContextWhenHidden: true },
     })
   );
+
+  // ─── Agent Service ───────────────────────────────────────────
+  agentService = new AgentService(
+    chat,
+    pipelineService,
+    contextService,
+    decisionService,
+    () => activeProject ? { id: activeProject.id, name: activeProject.name } : null,
+  );
+  chatProvider.setAgentService(agentService);
+  context.subscriptions.push({ dispose: () => agentService.dispose() });
 
   // Commands
   context.subscriptions.push(
@@ -429,7 +447,146 @@ export async function activate(context: vscode.ExtensionContext) {
       } else {
         vscode.window.showWarningMessage(`Project "${selected.label}" has no linked workspace folder.`);
       }
-    })
+    }),
+
+    // ─── Configure Agent Models ──────────────────────────────
+    vscode.commands.registerCommand('thinkcoffee.configureAgentModels', async () => {
+      const config = loadAgentConfig();
+
+      const modeChoice = await vscode.window.showQuickPick([
+        { label: 'Manual', description: 'Voce escolhe o modelo de cada agente', value: 'manual' as const },
+        { label: 'Auto (PM Opus decide)', description: 'O PM (Opus) analisa o pipeline e atribui modelos', value: 'auto' as const },
+      ], { placeHolder: 'Modo de configuracao de modelos' });
+      if (!modeChoice) return;
+
+      if (modeChoice.value === 'auto') {
+        config.mode = 'auto';
+        saveAgentConfig(config);
+
+        const project = activeProject;
+        if (project) {
+          const pipeline = pipelineService.getActive(project.id);
+          if (pipeline) {
+            await agentService.autoAssignModels(pipeline);
+          } else {
+            vscode.window.showInformationMessage(
+              'Modo auto ativado. O PM atribuira modelos quando um pipeline for criado.'
+            );
+          }
+        }
+        chatProvider.refresh();
+        return;
+      }
+
+      // Manual mode — let user pick model for each agent
+      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+
+      for (const role of roles) {
+        if (role === 'product-manager') continue; // Always opus
+
+        const currentModel = config.models[role] || DEFAULT_AGENT_MODELS[role];
+        const items = AVAILABLE_MODELS.map(m => ({
+          label: m.label,
+          description: `${m.family} (${m.tier})`,
+          picked: m.family === currentModel,
+          family: m.family,
+        }));
+
+        const pick = await vscode.window.showQuickPick(items, {
+          placeHolder: `Modelo para ${AGENT_META[role].label} (atual: ${currentModel})`,
+        });
+        if (!pick) continue;
+
+        setAgentModel(role, pick.family);
+      }
+
+      chatProvider.refresh();
+      vscode.window.showInformationMessage('Modelos dos agentes configurados.');
+    }),
+
+    // ─── Run Current Phase ───────────────────────────────────
+    vscode.commands.registerCommand('thinkcoffee.runPhase', async () => {
+      const project = await getProject();
+      if (!project) return;
+
+      const active = pipelineService.getActive(project.id);
+      if (!active) {
+        vscode.window.showWarningMessage('Nenhum pipeline ativo.');
+        return;
+      }
+
+      const phase = active.phases[active.currentPhase];
+      if (!phase || phase.status !== 'in-progress') {
+        vscode.window.showWarningMessage('Fase atual nao esta em andamento.');
+        return;
+      }
+
+      // Auto-assign models if in auto mode
+      const config = loadAgentConfig();
+      if (config.mode === 'auto') {
+        await agentService.autoAssignModels(active);
+      }
+
+      agentService.runPhase(project.id, active.id);
+    }),
+
+    // ─── Stop All Agents ─────────────────────────────────────
+    vscode.commands.registerCommand('thinkcoffee.stopAgents', () => {
+      agentService.stopAll();
+      vscode.window.showInformationMessage('Todos os agentes foram parados.');
+      chatProvider.refresh();
+    }),
+
+    // ─── Invoke Single Agent ─────────────────────────────────
+    vscode.commands.registerCommand('thinkcoffee.invokeAgent', async () => {
+      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+      const config = loadAgentConfig();
+
+      const pick = await vscode.window.showQuickPick(
+        roles.map(r => ({
+          label: AGENT_META[r].label,
+          description: `${config.models[r] || DEFAULT_AGENT_MODELS[r]}`,
+          detail: AGENT_META[r].description,
+          role: r,
+        })),
+        { placeHolder: 'Qual agente invocar?' }
+      );
+      if (!pick) return;
+
+      const message = await vscode.window.showInputBox({
+        prompt: `Mensagem para ${pick.label}`,
+        placeHolder: 'O que voce precisa que esse agente faca...',
+      });
+      if (!message) return;
+
+      chat.send({
+        sender: 'programmer',
+        senderLabel: 'You',
+        content: `@${pick.role} ${message}`,
+        type: 'request',
+        mentions: [pick.role],
+      });
+      chatProvider.refresh();
+      agentService.invokeAgent(pick.role, message);
+    }),
+
+    // ─── View Agent Models ───────────────────────────────────
+    vscode.commands.registerCommand('thinkcoffee.viewAgentModels', () => {
+      const config = loadAgentConfig();
+      const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+      const lines = roles.map(r => {
+        const model = config.models[r] || DEFAULT_AGENT_MODELS[r];
+        const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
+        return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
+      });
+      chat.send({
+        sender: 'system',
+        senderLabel: 'Config',
+        content: `Modelos dos agentes (modo: **${config.mode}**):\n\n${lines.join('\n')}`,
+        type: 'info',
+      });
+      chatProvider.refresh();
+    }),
   );
 }
 
