@@ -148,22 +148,12 @@
       ],
       "view/title": [
         {
-          "command": "thinkcoffee.createPipeline",
-          "when": "view == thinkcoffee.chat",
-          "group": "navigation"
-        },
-        {
           "command": "thinkcoffee.runPhase",
           "when": "view == thinkcoffee.chat",
           "group": "navigation"
         },
         {
           "command": "thinkcoffee.stopAgents",
-          "when": "view == thinkcoffee.chat",
-          "group": "navigation"
-        },
-        {
-          "command": "thinkcoffee.refreshPipeline",
           "when": "view == thinkcoffee.chat",
           "group": "navigation"
         }

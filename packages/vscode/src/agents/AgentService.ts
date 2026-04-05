@@ -5,7 +5,7 @@ import {
   DEFAULT_AGENT_MODELS, AVAILABLE_MODELS,
 } from '@thinkcoffee/core';
 import type {
-  AgentRole, Pipeline, AgentTask, ChatMessage, AgentModelConfig, PMModelAssignment,
+  AgentRole, Pipeline, AgentTask, ChatMessage, AgentModelConfig, PMModelAssignment, PhaseTemplate,
 } from '@thinkcoffee/core';
 import fs from 'fs';
 import path from 'path';
@@ -93,6 +93,63 @@ Responda APENAS com JSON valido, sem markdown. Formato:
 [{"role": "architect", "model": "claude-opus-4", "reason": "arquitetura complexa"}, ...]
 
 NAO inclua product-manager na lista (ja esta definido).`;
+}
+
+function buildPMPlanPhasesPrompt(objective: string): string {
+  const roles = Object.entries(AGENT_META)
+    .map(([role, meta]) => `- \`${role}\`: ${meta.description}`)
+    .join('\n');
+
+  return `Voce e o Product Manager (PM) do time ThinkCoffee, rodando em claude-opus-4.6.
+Seu trabalho agora e PLANEJAR AS FASES da pipeline para o objetivo abaixo.
+
+## Objetivo
+${objective}
+
+## Agentes disponiveis
+${roles}
+
+## Regras
+- Voce decide QUANTAS fases, QUAIS sao as fases, e QUAIS AGENTES participam de cada fase
+- Cada fase tem: name (string), order (int comecando de 0), parallel (bool — se os agentes da fase rodam em paralelo), agents (lista de roles)
+- Cada fase pode ter 1 ou mais agentes
+- A PRIMEIRA fase deve SEMPRE incluir "product-manager" para planejamento
+- Fases de implementacao que tem backend+frontend+devops podem ser paralelas
+- Fases de teste e review devem vir DEPOIS da implementacao
+- NAO crie fases desnecessarias. Se o objetivo for simples, menos fases. Se for complexo, mais fases
+- Voce pode customizar a descricao da tarefa de cada agente em cada fase via taskDescriptions
+- Se precisar de uma fase de "Refatoracao", "Design de UI", "Seguranca", etc, voce pode criar
+
+## Formato de resposta
+Responda APENAS com JSON valido (array), sem markdown, sem explicacao. Formato:
+[
+  {
+    "name": "Planning",
+    "order": 0,
+    "parallel": false,
+    "agents": ["product-manager"],
+    "taskDescriptions": {
+      "product-manager": {
+        "title": "Definir requisitos e backlog",
+        "description": "Analisar objetivo e produzir requisitos, criterios de aceite, user stories."
+      }
+    }
+  },
+  {
+    "name": "Architecture",
+    "order": 1,
+    "parallel": false,
+    "agents": ["architect"],
+    "taskDescriptions": {
+      "architect": {
+        "title": "Definir arquitetura tecnica",
+        "description": "Stack, estrutura de pastas, contratos de API, modelo de dados."
+      }
+    }
+  }
+]
+
+Pense bem no objetivo e crie as fases mais adequadas. Adapte a pipeline ao projeto.`;
 }
 
 // ─── Agent Tools ─────────────────────────────────────────────
@@ -288,7 +345,7 @@ export class AgentService {
   private _running = new Map<string, RunningAgent>(); // taskId -> RunningAgent
   private _directInvocations = new Set<AgentRole>(); // roles with active direct invocations
   private _pendingMentions: { from: AgentRole; to: AgentRole; message: string }[] = [];
-  private _chat: ChatService;
+  private _getChat: () => ChatService;
   private _pipelines: PipelineService;
   private _contexts: ContextService;
   private _decisions: DecisionService;
@@ -296,14 +353,17 @@ export class AgentService {
   private _onAgentStateChange = new vscode.EventEmitter<void>();
   readonly onAgentStateChange = this._onAgentStateChange.event;
 
+  /** Shorthand to get the active chat */
+  private get _chat(): ChatService { return this._getChat(); }
+
   constructor(
-    chat: ChatService,
+    getChat: () => ChatService,
     pipelines: PipelineService,
     contexts: ContextService,
     decisions: DecisionService,
     getProject: () => { id: string; name: string } | null,
   ) {
-    this._chat = chat;
+    this._getChat = getChat;
     this._pipelines = pipelines;
     this._contexts = contexts;
     this._decisions = decisions;
@@ -346,6 +406,92 @@ export class AgentService {
   stopAll(): void {
     for (const [taskId] of this._running) {
       this.stopAgent(taskId);
+    }
+  }
+
+  // ─── PM plans the phases ─────────────────────────────────
+
+  async planPhases(objective: string): Promise<PhaseTemplate[] | null> {
+    this._chat.send({
+      sender: 'product-manager',
+      senderLabel: 'PM (Opus)',
+      content: 'Analisando o objetivo para planejar as fases da pipeline...',
+      type: 'info',
+    });
+
+    try {
+      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4.6' });
+      if (!model) {
+        this._chat.send({
+          sender: 'system', senderLabel: 'System',
+          content: 'claude-opus-4.6 nao disponivel. Usando fases padrao.',
+          type: 'error',
+        });
+        return null;
+      }
+
+      const prompt = buildPMPlanPhasesPrompt(objective);
+      const messages = [vscode.LanguageModelChatMessage.User(prompt)];
+      const cts = new vscode.CancellationTokenSource();
+
+      // Track PM as running for typing indicator
+      this._directInvocations.add('product-manager');
+      this._onAgentStateChange.fire();
+
+      const response = await model.sendRequest(messages, {}, cts.token);
+      let fullText = '';
+      for await (const part of response.stream) {
+        if (part instanceof vscode.LanguageModelTextPart) {
+          fullText += part.value;
+        }
+      }
+      cts.dispose();
+
+      // Parse JSON response
+      const jsonMatch = fullText.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) throw new Error('PM nao retornou JSON valido para as fases');
+
+      const rawPhases: any[] = JSON.parse(jsonMatch[0]);
+
+      // Validate and cast
+      const phases: PhaseTemplate[] = rawPhases.map((rp, idx) => ({
+        name: String(rp.name || `Phase ${idx + 1}`),
+        order: typeof rp.order === 'number' ? rp.order : idx,
+        parallel: Boolean(rp.parallel),
+        agents: (rp.agents as string[]).filter((a: string) =>
+          Object.keys(AGENT_META).includes(a)
+        ) as AgentRole[],
+        taskDescriptions: rp.taskDescriptions,
+      }));
+
+      // Ensure at least one phase with a valid agent
+      if (phases.length === 0 || phases.some(p => p.agents.length === 0)) {
+        throw new Error('PM retornou fases invalidas (sem agentes)');
+      }
+
+      // Report to chat
+      const report = phases.map((p, i) =>
+        `${i + 1}. **${p.name}** — ${p.agents.map(a => AGENT_META[a as AgentRole]?.label || a).join(', ')}${p.parallel ? ' (paralelo)' : ''}`
+      ).join('\n');
+
+      this._chat.send({
+        sender: 'product-manager',
+        senderLabel: 'PM (Opus)',
+        content: `Pipeline planejada com **${phases.length} fases**:\n\n${report}`,
+        type: 'response',
+      });
+
+      return phases;
+    } catch (err: any) {
+      this._chat.send({
+        sender: 'system', senderLabel: 'System',
+        content: `Falha ao planejar fases: ${err.message}. Usando fases padrao.`,
+        type: 'error',
+      });
+      return null;
+    } finally {
+      this._directInvocations.delete('product-manager');
+      this._onAgentStateChange.fire();
     }
   }
 

@@ -16,7 +16,16 @@ export type AgentRole =
 
 export type PhaseStatus = 'pending' | 'in-progress' | 'awaiting-approval' | 'approved' | 'completed' | 'failed';
 export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'failed' | 'blocked';
-export type PipelineStatus = 'planning' | 'architecture' | 'implementation' | 'testing' | 'review' | 'completed' | 'failed';
+export type PipelineStatus = 'active' | 'completed' | 'failed';
+
+/** Template the PM returns for each phase */
+export interface PhaseTemplate {
+  name: string;
+  order: number;
+  parallel: boolean;
+  agents: AgentRole[];
+  taskDescriptions?: Record<string, { title: string; description: string }>;
+}
 
 export interface AgentTask {
   id: string;
@@ -91,51 +100,57 @@ export const AGENT_META: Record<AgentRole, { label: string; description: string 
 
 // ─── Default phase templates ─────────────────────────────────
 
-function createDefaultPhases(): Omit<PipelinePhase, 'id' | 'tasks'>[] {
+function createDefaultPhases(): PhaseTemplate[] {
   return [
-    { name: 'Planning', order: 0, parallel: false, requiresApproval: true, status: 'pending', agents: ['product-manager'] },
-    { name: 'Architecture', order: 1, parallel: false, requiresApproval: true, status: 'pending', agents: ['architect'] },
-    { name: 'Implementation', order: 2, parallel: true, requiresApproval: true, status: 'pending', agents: ['backend', 'frontend', 'devops'] },
-    { name: 'Testing', order: 3, parallel: false, requiresApproval: true, status: 'pending', agents: ['qa'] },
-    { name: 'Code Review', order: 4, parallel: false, requiresApproval: true, status: 'pending', agents: ['code-review'] },
+    { name: 'Planning', order: 0, parallel: false, agents: ['product-manager'] },
+    { name: 'Architecture', order: 1, parallel: false, agents: ['architect'] },
+    { name: 'Implementation', order: 2, parallel: true, agents: ['backend', 'frontend', 'devops'] },
+    { name: 'Testing', order: 3, parallel: false, agents: ['qa'] },
+    { name: 'Code Review', order: 4, parallel: false, agents: ['code-review'] },
   ];
 }
 
-function createTasksForPhase(phaseName: string, agents: AgentRole[], objective: string): AgentTask[] {
-  const taskDescriptions: Record<AgentRole, (obj: string) => { title: string; description: string }> = {
-    'product-manager': (obj) => ({
-      title: 'Define requirements & backlog',
-      description: `Analyze the objective: "${obj}"\n\nProduce:\n1. Structured requirements\n2. Acceptance criteria\n3. Prioritized backlog\n4. User stories`,
-    }),
-    'architect': (obj) => ({
-      title: 'Design technical architecture',
-      description: `Based on the PM requirements, design:\n1. Technology stack\n2. Folder/project structure\n3. API contracts\n4. Data model\n5. Integration points`,
-    }),
-    'backend': (_) => ({
-      title: 'Implement backend',
-      description: 'Follow the architecture document to implement:\n1. API endpoints\n2. Business logic\n3. Database migrations\n4. External integrations',
-    }),
-    'frontend': (_) => ({
-      title: 'Implement frontend',
-      description: 'Follow the architecture document to implement:\n1. UI components\n2. Pages/screens\n3. API integration\n4. State management',
-    }),
-    'devops': (_) => ({
-      title: 'Setup infrastructure',
-      description: 'Configure:\n1. CI/CD pipeline\n2. Dockerfile / container setup\n3. Environment variables\n4. Deployment scripts',
-    }),
-    'qa': (_) => ({
-      title: 'Test & validate',
-      description: 'Write and execute:\n1. Unit tests\n2. Integration tests\n3. Bug reports with full context\n4. Test coverage report',
-    }),
-    'code-review': (_) => ({
-      title: 'Final code review',
-      description: 'Review for:\n1. Code patterns & standards\n2. Security vulnerabilities\n3. Performance issues\n4. Architecture consistency\n5. Merge readiness',
-    }),
-  };
+/** Default task descriptions per role (fallback when PM doesn't specify) */
+const DEFAULT_TASK_DESCRIPTIONS: Record<AgentRole, (obj: string) => { title: string; description: string }> = {
+  'product-manager': (obj) => ({
+    title: 'Define requirements & backlog',
+    description: `Analyze the objective: "${obj}"\n\nProduce:\n1. Structured requirements\n2. Acceptance criteria\n3. Prioritized backlog\n4. User stories`,
+  }),
+  'architect': () => ({
+    title: 'Design technical architecture',
+    description: 'Based on the PM requirements, design:\n1. Technology stack\n2. Folder/project structure\n3. API contracts\n4. Data model\n5. Integration points',
+  }),
+  'backend': () => ({
+    title: 'Implement backend',
+    description: 'Follow the architecture document to implement:\n1. API endpoints\n2. Business logic\n3. Database migrations\n4. External integrations',
+  }),
+  'frontend': () => ({
+    title: 'Implement frontend',
+    description: 'Follow the architecture document to implement:\n1. UI components\n2. Pages/screens\n3. API integration\n4. State management',
+  }),
+  'devops': () => ({
+    title: 'Setup infrastructure',
+    description: 'Configure:\n1. CI/CD pipeline\n2. Dockerfile / container setup\n3. Environment variables\n4. Deployment scripts',
+  }),
+  'qa': () => ({
+    title: 'Test & validate',
+    description: 'Write and execute:\n1. Unit tests\n2. Integration tests\n3. Bug reports with full context\n4. Test coverage report',
+  }),
+  'code-review': () => ({
+    title: 'Final code review',
+    description: 'Review for:\n1. Code patterns & standards\n2. Security vulnerabilities\n3. Performance issues\n4. Architecture consistency\n5. Merge readiness',
+  }),
+};
 
+function createTasksForPhase(
+  agents: AgentRole[],
+  objective: string,
+  customDescriptions?: Record<string, { title: string; description: string }>,
+): AgentTask[] {
   return agents.map(agent => {
-    const gen = taskDescriptions[agent];
-    const { title, description } = gen(objective);
+    // Use PM-provided description if available, then fallback to defaults
+    const custom = customDescriptions?.[agent];
+    const { title, description } = custom || DEFAULT_TASK_DESCRIPTIONS[agent](objective);
     return {
       id: crypto.randomUUID(),
       agent,
@@ -178,17 +193,23 @@ function loadPipeline(projectId: string, pipelineId: string): Pipeline | null {
 // ─── PipelineService ─────────────────────────────────────────
 
 export class PipelineService {
-  /** Create a new pipeline from an objective */
-  create(projectId: string, objective: string, workspace: string): Pipeline {
+  /** Create a new pipeline from an objective.
+   *  If `customPhases` is provided (from PM planning), those are used instead of the default 5. */
+  create(projectId: string, objective: string, workspace: string, customPhases?: PhaseTemplate[]): Pipeline {
     const id = crypto.randomUUID();
-    const phaseTemplates = createDefaultPhases();
+    const phaseTemplates = customPhases || createDefaultPhases();
 
-    const phases: PipelinePhase[] = phaseTemplates.map(pt => {
+    const phases: PipelinePhase[] = phaseTemplates.map((pt, idx) => {
       const phaseId = crypto.randomUUID();
       return {
-        ...pt,
+        name: pt.name,
+        order: pt.order ?? idx,
+        parallel: pt.parallel,
+        requiresApproval: true,
+        status: 'pending' as PhaseStatus,
+        agents: pt.agents,
         id: phaseId,
-        tasks: createTasksForPhase(pt.name, pt.agents, objective),
+        tasks: createTasksForPhase(pt.agents, objective, pt.taskDescriptions),
       };
     });
 
@@ -201,7 +222,7 @@ export class PipelineService {
       projectId,
       workspace,
       objective,
-      status: 'planning',
+      status: 'active',
       currentPhase: 0,
       phases,
       createdAt: new Date().toISOString(),
@@ -476,8 +497,6 @@ export class PipelineService {
   // ─── Internal ────────────────────────────────────────────
 
   private _advancePhase(p: Pipeline): void {
-    const statusMap: PipelineStatus[] = ['planning', 'architecture', 'implementation', 'testing', 'review', 'completed'];
-
     p.phases[p.currentPhase].status = 'completed';
     p.currentPhase++;
 
@@ -485,7 +504,7 @@ export class PipelineService {
       p.status = 'completed';
       p.completedAt = new Date().toISOString();
     } else {
-      p.status = statusMap[p.currentPhase] || 'implementation';
+      p.status = 'active';
       p.phases[p.currentPhase].status = 'in-progress';
     }
   }

@@ -26,7 +26,7 @@ export type { ChatMessage } from './chat';
 
 // Pipeline
 export { PipelineService, AGENT_META } from './pipeline';
-export type { Pipeline, PipelinePhase, AgentTask, AgentRole, PhaseStatus, TaskStatus, PipelineStatus } from './pipeline';
+export type { Pipeline, PipelinePhase, AgentTask, AgentRole, PhaseStatus, TaskStatus, PipelineStatus, PhaseTemplate } from './pipeline';
 
 // Agent Config
 export {

@@ -24,6 +24,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   private _stopWatch: (() => void) | null = null;
   private _pipelineRefreshTimer?: ReturnType<typeof setInterval>;
 
+  /** Per-pipeline chat channels (lazy) */
+  private _pipelineChats = new Map<string, ChatService>();
+  /** Currently viewed pipeline ID (null = list view) */
+  private _activePipelineId: string | null = null;
+  /** Auto-approve phases without user confirmation */
+  private _autoApprove = false;
+
+  /** Returns the chat service for the active pipeline (or global default) */
+  private get _activeChat(): ChatService {
+    if (this._activePipelineId) {
+      return this._getOrCreatePipelineChat(this._activePipelineId);
+    }
+    return this._chat;
+  }
+
   constructor(
     private readonly _extensionUri: vscode.Uri,
     chat: ChatService,
@@ -62,12 +77,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       switch (msg.command) {
         case 'send': await this._handleMessage(msg.text); break;
         case 'ready': this._sendState(); break;
-        case 'clear': this._chat.clear(); this._sendState(); break;
+        case 'clear': this._activeChat.clear(); this._sendState(); break;
         case 'approve': this._approvePhase(); break;
         case 'reject': this._rejectPhase(msg.feedback); break;
         case 'createPipeline': this._createPipeline(msg.objective); break;
         case 'refreshPipeline': this._sendState(); break;
         case 'changeMode': this._changeMode(msg.mode); break;
+        case 'setAutoApprove': this._autoApprove = !!msg.enabled; break;
+        case 'switchPipeline': this._switchToPipeline(msg.pipelineId); break;
+        case 'backToList': this._backToList(); break;
+        case 'newPipeline': this._promptNewPipeline(); break;
       }
     });
 
@@ -86,18 +105,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Force refresh from outside */
   refresh() { this._sendState(); }
 
+  /** Expose active chat for AgentService to write to */
+  getActiveChat(): ChatService { return this._activeChat; }
+
   /** Change quality preset mode from webview dropdown */
   private _changeMode(mode: string) {
     const presets = ['cafe-soluvel', 'coado-com-carinho', 'espresso-duplo'] as const;
     if (presets.includes(mode as any)) {
       applyQualityPreset(mode as any);
-      this._chat.send({
+      this._activeChat.send({
         sender: 'system',
         senderLabel: 'Sistema',
         content: `Modo alterado para **${QUALITY_PRESETS[mode as keyof typeof QUALITY_PRESETS].label}** — ${QUALITY_PRESETS[mode as keyof typeof QUALITY_PRESETS].subtitle}`,
         type: 'info',
       });
       this._sendState();
+    }
+  }
+
+  // ─── Pipeline navigation ──────────────────────────────────
+
+  private _getOrCreatePipelineChat(pipelineId: string): ChatService {
+    let chat = this._pipelineChats.get(pipelineId);
+    if (!chat) {
+      chat = new ChatService(`pipeline-${pipelineId}`);
+      this._pipelineChats.set(pipelineId, chat);
+    }
+    return chat;
+  }
+
+  private _switchToPipeline(pipelineId: string) {
+    // Swap watcher to new pipeline chat
+    if (this._stopWatch) this._stopWatch();
+    this._activePipelineId = pipelineId;
+    const chat = this._getOrCreatePipelineChat(pipelineId);
+    this._stopWatch = chat.watch(() => this._sendState());
+    this._sendState();
+  }
+
+  private _backToList() {
+    if (this._stopWatch) this._stopWatch();
+    this._activePipelineId = null;
+    this._stopWatch = this._chat.watch(() => this._sendState());
+    this._sendState();
+  }
+
+  private async _promptNewPipeline() {
+    const obj = await vscode.window.showInputBox({
+      prompt: 'Objetivo da pipeline',
+      placeHolder: 'Ex: Implementar autenticacao OAuth2...',
+    });
+    if (obj?.trim()) {
+      await this._createPipeline(obj.trim());
     }
   }
 
@@ -114,27 +173,59 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private _sendState() {
     if (!this._view) return;
-    const msgs = this._chat.getHistory(200);
     const project = this._getProject();
-    const pipeline = project ? this._pipelines.getActive(project.id) : null;
     const runningAgents = this._agentService ? this._agentService.getRunning() : [];
-    this._view.webview.postMessage({
-      command: 'state',
-      data: {
-        messages: msgs,
-        pipeline: pipeline ? this._serializePipeline(pipeline) : null,
-        project: project ? { id: project.id, name: project.name } : null,
-        agents: AGENT_META,
-        runningAgents,
-        modelConfig: loadAgentConfig(),
-      },
-    });
+
+    if (this._activePipelineId && project) {
+      // ─── Chat mode: viewing a specific pipeline ───
+      const pipeline = this._pipelines.get(project.id, this._activePipelineId);
+      const chat = this._getOrCreatePipelineChat(this._activePipelineId);
+      const msgs = chat.getHistory(200);
+      this._view.webview.postMessage({
+        command: 'state',
+        data: {
+          mode: 'chat',
+          messages: msgs,
+          pipeline: pipeline ? this._serializePipeline(pipeline) : null,
+          project: project ? { id: project.id, name: project.name } : null,
+          agents: AGENT_META,
+          runningAgents,
+          modelConfig: loadAgentConfig(),
+        },
+      });
+    } else {
+      // ─── List mode: show all pipelines ───
+      const pipelines = project ? this._pipelines.list(project.id) : [];
+      const serialized = pipelines
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .map(p => ({
+          id: p.id,
+          objective: p.objective,
+          status: p.status,
+          createdAt: p.createdAt,
+          currentPhase: p.currentPhase,
+          totalPhases: p.phases.length,
+          completedPhases: p.phases.filter(ph => ph.status === 'completed' || ph.status === 'approved').length,
+        }));
+      this._view.webview.postMessage({
+        command: 'state',
+        data: {
+          mode: 'list',
+          pipelines: serialized,
+          project: project ? { id: project.id, name: project.name } : null,
+          agents: AGENT_META,
+          runningAgents,
+          modelConfig: loadAgentConfig(),
+        },
+      });
+    }
   }
 
   private _sendPipelineState() {
     if (!this._view) return;
+    if (!this._activePipelineId) return;
     const project = this._getProject();
-    const pipeline = project ? this._pipelines.getActive(project.id) : null;
+    const pipeline = project ? this._pipelines.get(project.id, this._activePipelineId) : null;
     this._view.webview.postMessage({
       command: 'pipeline',
       data: pipeline ? this._serializePipeline(pipeline) : null,
@@ -182,7 +273,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
       // Check if it's an agent role
       if (agentRoles.includes(target as AgentRole)) {
-        this._chat.send({
+        this._activeChat.send({
           sender: 'programmer',
           senderLabel: 'You',
           content: trimmed,
@@ -201,7 +292,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         fe: 'frontend', do: 'devops', qa: 'qa', cr: 'code-review',
       };
       if (shortMap[target]) {
-        this._chat.send({
+        this._activeChat.send({
           sender: 'programmer',
           senderLabel: 'You',
           content: trimmed,
@@ -239,14 +330,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } else if (trimmed === '/agents') {
       this._showRunningAgents();
     } else {
-      // Regular message
-      this._chat.send({
-        sender: 'programmer',
-        senderLabel: 'You',
-        content: trimmed,
-        type: 'request',
-      });
-      this._sendState();
+      // Regular message — if in list view, treat as new pipeline objective
+      if (!this._activePipelineId) {
+        await this._createPipeline(trimmed);
+      } else {
+        this._activeChat.send({
+          sender: 'programmer',
+          senderLabel: 'You',
+          content: trimmed,
+          type: 'request',
+        });
+        this._sendState();
+      }
     }
   }
 
@@ -316,14 +411,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    const p = this._pipelines.create(project.id, obj, ws);
-    this._chat.send({
-      sender: 'system',
-      senderLabel: 'Pipeline',
-      content: `Pipeline created: **${obj}**\n\nPhases: ${p.phases.map(ph => ph.name).join(' -> ')}\n\nFirst phase **${p.phases[0].name}** is now active.`,
-      type: 'info',
+
+    // PM plans the phases dynamically via Opus
+    let customPhases = null;
+    if (this._agentService) {
+      // Switch to a temporary chat so PM messages appear (will be re-routed after pipeline creation)
+      this._systemMsg(`PM esta planejando as fases para: **${obj}**`, 'info');
+      customPhases = await this._agentService.planPhases(obj);
+    }
+
+    const p = this._pipelines.create(project.id, obj, ws, customPhases || undefined);
+
+    // Create per-pipeline chat channel and start as PM conversation
+    const chat = this._getOrCreatePipelineChat(p.id);
+    chat.send({
+      sender: 'product-manager',
+      senderLabel: AGENT_META['product-manager'].label,
+      content: `Pipeline criada com **${p.phases.length} fases**:\n\n${p.phases.map((ph, i) => `${i + 1}. **${ph.name}** — ${ph.agents.map(a => AGENT_META[a].label).join(', ')}`).join('\n')}\n\nA primeira fase **${p.phases[0].name}** ja esta ativa. Use \`/run\` para iniciar os agentes.`,
+      type: 'response',
     });
-    this._sendState();
+
+    // Switch to the new pipeline chat
+    this._switchToPipeline(p.id);
   }
 
   private async _approvePhase() {
@@ -344,13 +453,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       ? 'Pipeline completed! All phases done.'
       : `Phase approved! Next: **${nextPhase.name}** (${nextPhase.agents.map(a => AGENT_META[a].label).join(', ')})`;
 
-    this._chat.send({
+    this._activeChat.send({
       sender: 'programmer',
       senderLabel: 'You',
       content: 'Approved current phase.',
       type: 'request',
     });
-    this._chat.send({
+    this._activeChat.send({
       sender: 'system',
       senderLabel: 'Pipeline',
       content: msg,
@@ -377,13 +486,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     this._pipelines.rejectPhase(project.id, active.id, fb);
-    this._chat.send({
+    this._activeChat.send({
       sender: 'programmer',
       senderLabel: 'You',
       content: `Rejected phase with feedback: ${fb}`,
       type: 'request',
     });
-    this._chat.send({
+    this._activeChat.send({
       sender: 'system',
       senderLabel: 'Pipeline',
       content: 'Phase rejected. Agents will redo their tasks with your feedback.',
@@ -405,38 +514,38 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private _systemMsg(content: string, type: ChatMessage['type'] = 'info') {
-    this._chat.send({ sender: 'system', senderLabel: 'ThinkCoffee', content, type });
+    this._activeChat.send({ sender: 'system', senderLabel: 'ThinkCoffee', content, type });
     this._sendState();
   }
 
   // ─── @agent handlers ──────────────────────────────────────
 
   private async _handleGitHub(input: string) {
-    this._chat.send({ sender: 'programmer', senderLabel: 'You', content: `@gh ${input}`, type: 'request' });
+    this._activeChat.send({ sender: 'programmer', senderLabel: 'You', content: `@gh ${input}`, type: 'request' });
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     try {
       const output = execSync(`gh ${input} 2>&1`, { cwd: root, encoding: 'utf-8', timeout: 30000 });
-      this._chat.send({ sender: 'github-cli', senderLabel: 'GitHub CLI', content: `\`gh ${input}\`\n\n\`\`\`\n${output.trim()}\n\`\`\``, type: 'response' });
+      this._activeChat.send({ sender: 'github-cli', senderLabel: 'GitHub CLI', content: `\`gh ${input}\`\n\n\`\`\`\n${output.trim()}\n\`\`\``, type: 'response' });
     } catch (e: any) {
-      this._chat.send({ sender: 'github-cli', senderLabel: 'GitHub CLI', content: `Failed: \`gh ${input}\`\n\n\`\`\`\n${e.stderr || e.message}\n\`\`\``, type: 'error' });
+      this._activeChat.send({ sender: 'github-cli', senderLabel: 'GitHub CLI', content: `Failed: \`gh ${input}\`\n\n\`\`\`\n${e.stderr || e.message}\n\`\`\``, type: 'error' });
     }
     this._sendState();
   }
 
   private async _handleTerminal(input: string) {
-    this._chat.send({ sender: 'programmer', senderLabel: 'You', content: `@terminal ${input}`, type: 'request' });
+    this._activeChat.send({ sender: 'programmer', senderLabel: 'You', content: `@terminal ${input}`, type: 'request' });
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     try {
       const output = execSync(input, { cwd: root, encoding: 'utf-8', timeout: 30000, shell: 'powershell.exe' });
-      this._chat.send({ sender: 'terminal', senderLabel: 'Terminal', content: `\`${input}\`\n\n\`\`\`\n${output.trim() || '(no output)'}\n\`\`\``, type: 'code' });
+      this._activeChat.send({ sender: 'terminal', senderLabel: 'Terminal', content: `\`${input}\`\n\n\`\`\`\n${output.trim() || '(no output)'}\n\`\`\``, type: 'code' });
     } catch (e: any) {
-      this._chat.send({ sender: 'terminal', senderLabel: 'Terminal', content: `Failed: \`${input}\`\n\n\`\`\`\n${e.stderr || e.message}\n\`\`\``, type: 'error' });
+      this._activeChat.send({ sender: 'terminal', senderLabel: 'Terminal', content: `Failed: \`${input}\`\n\n\`\`\`\n${e.stderr || e.message}\n\`\`\``, type: 'error' });
     }
     this._sendState();
   }
 
   private async _handleFiles(input: string) {
-    this._chat.send({ sender: 'programmer', senderLabel: 'You', content: `@files ${input}`, type: 'request' });
+    this._activeChat.send({ sender: 'programmer', senderLabel: 'You', content: `@files ${input}`, type: 'request' });
     const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!root) { this._systemMsg('No workspace folder open.', 'error'); return; }
 
@@ -451,7 +560,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const content = fs.readFileSync(abs, 'utf-8');
         const lines = content.split('\n');
         const preview = lines.length > 100 ? lines.slice(0, 100).join('\n') + `\n... (${lines.length - 100} more lines)` : content;
-        this._chat.send({ sender: 'system', senderLabel: 'Files', content: `**${filePath}** (${lines.length} lines)\n\n\`\`\`\n${preview}\n\`\`\``, type: 'response' });
+        this._activeChat.send({ sender: 'system', senderLabel: 'Files', content: `**${filePath}** (${lines.length} lines)\n\n\`\`\`\n${preview}\n\`\`\``, type: 'response' });
       } else if (action === 'list') {
         const target = filePath ? path.resolve(root, filePath) : root;
         if (!target.startsWith(root) && target !== root) throw new Error('Path traversal denied');
@@ -459,12 +568,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         const list = entries.filter(e => !e.name.startsWith('.') && e.name !== 'node_modules')
           .sort((a, b) => { if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1; return a.name.localeCompare(b.name); })
           .map(e => e.isDirectory() ? `${e.name}/` : e.name).join('\n');
-        this._chat.send({ sender: 'system', senderLabel: 'Files', content: `**${filePath || '.'}**\n\n\`\`\`\n${list}\n\`\`\``, type: 'response' });
+        this._activeChat.send({ sender: 'system', senderLabel: 'Files', content: `**${filePath || '.'}**\n\n\`\`\`\n${list}\n\`\`\``, type: 'response' });
       } else {
-        this._chat.send({ sender: 'system', senderLabel: 'Files', content: 'Usage: `@files read <path>` or `@files list [path]`', type: 'info' });
+        this._activeChat.send({ sender: 'system', senderLabel: 'Files', content: 'Usage: `@files read <path>` or `@files list [path]`', type: 'info' });
       }
     } catch (e: any) {
-      this._chat.send({ sender: 'system', senderLabel: 'Files', content: `Error: ${e.message}`, type: 'error' });
+      this._activeChat.send({ sender: 'system', senderLabel: 'Files', content: `Error: ${e.message}`, type: 'error' });
     }
     this._sendState();
   }
@@ -815,6 +924,49 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     text-overflow: ellipsis;
   }
 
+  /* ─── Auto-approve toggle ───────────────────────────────── */
+  .autoapprove-wrap {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .autoapprove-wrap label {
+    font-size: 9px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle-switch {
+    position: relative;
+    width: 28px;
+    height: 14px;
+    cursor: pointer;
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 7px;
+    background: var(--vscode-input-border, #555);
+    transition: background 0.2s;
+  }
+  .toggle-switch input:checked + .toggle-track {
+    background: #22c55e;
+  }
+  .toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+  }
+  .toggle-switch input:checked ~ .toggle-thumb {
+    transform: translateX(14px);
+  }
+
   /* ─── Send button states ────────────────────────────────── */
   .send-btn.sending {
     opacity: 0.5;
@@ -940,11 +1092,102 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     font-size: 10px;
   }
   .quick-actions button:hover { background: var(--vscode-list-hoverBackground); }
+
+  /* ─── Pipeline List View ─────────────────────────────── */
+  .pipeline-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px;
+    display: none;
+  }
+  .pipeline-list.active { display: block; }
+  .pipeline-list .pl-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .pipeline-list .pl-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--vscode-foreground);
+  }
+  .pipeline-list .pl-hint {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    margin-bottom: 10px;
+  }
+  .pl-card {
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    animation: fadeIn 0.15s ease-in;
+  }
+  .pl-card:hover {
+    border-color: var(--vscode-focusBorder);
+    background: var(--vscode-list-hoverBackground);
+  }
+  .pl-card .pl-objective {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    margin-bottom: 4px;
+    line-height: 1.4;
+  }
+  .pl-card .pl-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .pl-card .pl-status {
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+  .pl-status.completed { background: #22c55e22; color: #22c55e; }
+  .pl-status.failed { background: #ef444422; color: #ef4444; }
+  .pl-status.active { background: #3b82f622; color: #3b82f6; }
+  .pl-card .pl-progress {
+    display: flex;
+    height: 3px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .pl-card .pl-progress .pl-seg {
+    flex: 1;
+    background: var(--vscode-input-border, #333);
+  }
+  .pl-card .pl-progress .pl-seg.done { background: #22c55e; }
+
+  /* ─── Back button in strip ────────────────────────────── */
+  .back-btn {
+    background: transparent;
+    border: none;
+    color: var(--vscode-foreground);
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.7;
+    flex-shrink: 0;
+  }
+  .back-btn:hover { opacity: 1; }
 </style>
 </head>
 <body>
   <div class="pipeline-strip" id="pipelineStrip">
     <div class="strip-header">
+      <button class="back-btn" id="backBtn" title="Voltar para lista">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
       <span class="strip-objective" id="stripObjective"></span>
       <span class="strip-phase" id="stripPhase"></span>
     </div>
@@ -959,12 +1202,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       <option value="espresso-duplo">Espresso Duplo</option>
     </select>
     <span class="mode-subtitle" id="modeSubtitle">Rapido e sem frescura</span>
+    <div class="autoapprove-wrap">
+      <label for="autoApproveToggle" title="Aprovar fases automaticamente sem pedir confirmacao">Auto-approve</label>
+      <label class="toggle-switch" title="Aprovar fases automaticamente">
+        <input type="checkbox" id="autoApproveToggle">
+        <span class="toggle-track"></span>
+        <span class="toggle-thumb"></span>
+      </label>
+    </div>
   </div>
 
   <div class="agents-bar" id="agentsBar">
     <div class="dot"></div>
     <div class="agent-chips" id="agentChips"></div>
     <button class="stop-btn" id="stopAgentsBtn">Stop</button>
+  </div>
+
+  <div class="pipeline-list" id="pipelineList">
+    <div class="pl-header">
+      <span class="pl-title">Pipelines</span>
+    </div>
+    <div class="pl-hint">Envie uma mensagem para criar uma nova pipeline.</div>
+    <div id="pipelineCards"></div>
   </div>
 
   <div class="messages" id="messages">
@@ -1042,6 +1301,71 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const typingLabel = document.getElementById('typingLabel');
   const modeSelect = document.getElementById('modeSelect');
   const modeSubtitle = document.getElementById('modeSubtitle');
+  const autoApproveToggle = document.getElementById('autoApproveToggle');
+  const pipelineList = document.getElementById('pipelineList');
+  const pipelineCards = document.getElementById('pipelineCards');
+  const inputArea = document.querySelector('.input-area');
+  const backBtn = document.getElementById('backBtn');
+
+  let autoApproveEnabled = false;
+
+  autoApproveToggle.addEventListener('change', () => {
+    autoApproveEnabled = autoApproveToggle.checked;
+    vscode.postMessage({ command: 'setAutoApprove', enabled: autoApproveEnabled });
+  });
+
+  backBtn.addEventListener('click', () => {
+    vscode.postMessage({ command: 'backToList' });
+  });
+
+  let currentMode = 'list';
+
+  function showListView(pipelines) {
+    currentMode = 'list';
+    pipelineList.classList.add('active');
+    messagesEl.style.display = 'none';
+    pipelineStrip.classList.remove('active');
+    agentsBar.classList.remove('active');
+    inputArea.style.display = '';
+    inputEl.placeholder = 'Descreva o objetivo para criar uma pipeline...';
+
+    pipelineCards.innerHTML = '';
+    if (!pipelines || pipelines.length === 0) return;
+
+    for (const p of pipelines) {
+      const card = document.createElement('div');
+      card.className = 'pl-card';
+      card.onclick = () => vscode.postMessage({ command: 'switchPipeline', pipelineId: p.id });
+
+      const statusClass = p.status === 'completed' ? 'completed' : p.status === 'failed' ? 'failed' : 'active';
+      const statusLabel = p.status === 'completed' ? 'Concluido' : p.status === 'failed' ? 'Falhou' : 'Em andamento';
+      const date = new Date(p.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+
+      let progressHtml = '<div class="pl-progress">';
+      for (let i = 0; i < p.totalPhases; i++) {
+        progressHtml += '<div class="pl-seg' + (i < p.completedPhases ? ' done' : '') + '"></div>';
+      }
+      progressHtml += '</div>';
+
+      card.innerHTML =
+        '<div class="pl-objective">' + escHtml(p.objective) + '</div>' +
+        '<div class="pl-meta">' +
+          '<span class="pl-status ' + statusClass + '">' + statusLabel + '</span>' +
+          '<span>' + p.completedPhases + '/' + p.totalPhases + ' fases</span>' +
+          '<span>' + date + '</span>' +
+        '</div>' +
+        progressHtml;
+      pipelineCards.appendChild(card);
+    }
+  }
+
+  function showChatView() {
+    currentMode = 'chat';
+    pipelineList.classList.remove('active');
+    messagesEl.style.display = '';
+    inputArea.style.display = '';
+    inputEl.placeholder = 'Message agents... (/ for commands)';
+  }
 
   const MODE_SUBTITLES = {
     'cafe-soluvel': 'Rapido e sem frescura',
@@ -1133,13 +1457,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       stripPhase.classList.remove('done');
     }
 
-    // Inline approval card in chat
+    // Inline approval card in chat — or auto-approve
     if (awaitingPhaseName) {
-      approvalTitle.textContent = awaitingPhaseName + ' aguardando aprovacao';
-      approvalCard.classList.add('active');
-      // Keep it at the bottom of messages
-      messagesEl.appendChild(approvalCard);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (autoApproveEnabled) {
+        approvalCard.classList.remove('active');
+        vscode.postMessage({ command: 'approve' });
+      } else {
+        approvalTitle.textContent = awaitingPhaseName + ' aguardando aprovacao';
+        approvalCard.classList.add('active');
+        messagesEl.appendChild(approvalCard);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
     } else {
       approvalCard.classList.remove('active');
     }
@@ -1281,17 +1609,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     const msg = e.data;
     if (msg.command === 'state') {
       if (msg.data.agents) currentAgents = msg.data.agents;
-      renderPipeline(msg.data.pipeline);
-      renderMessages(msg.data.messages);
-      renderRunningAgents(msg.data.runningAgents);
-      // Show typing for running agents
-      if (msg.data.runningAgents && msg.data.runningAgents.length > 0) {
-        const first = msg.data.runningAgents[0];
-        const agentLabel = (currentAgents[first.role] && currentAgents[first.role].label) || first.role;
-        showTyping(first.role, agentLabel + ' trabalhando...');
+
+      if (msg.data.mode === 'list') {
+        showListView(msg.data.pipelines);
+        renderRunningAgents(msg.data.runningAgents);
       } else {
-        hideTyping();
+        showChatView();
+        renderPipeline(msg.data.pipeline);
+        renderMessages(msg.data.messages);
+        renderRunningAgents(msg.data.runningAgents);
+        // Show typing for running agents
+        if (msg.data.runningAgents && msg.data.runningAgents.length > 0) {
+          const first = msg.data.runningAgents[0];
+          const agentLabel = (currentAgents[first.role] && currentAgents[first.role].label) || first.role;
+          showTyping(first.role, agentLabel + ' trabalhando...');
+        } else {
+          hideTyping();
+        }
       }
+
       // Sync mode dropdown
       if (msg.data.modelConfig && msg.data.modelConfig.mode) {
         const m = msg.data.modelConfig.mode;

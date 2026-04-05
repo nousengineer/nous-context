@@ -121,7 +121,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // ─── Agent Service ───────────────────────────────────────────
   agentService = new AgentService(
-    chat,
+    () => chatProvider.getActiveChat(),
     pipelineService,
     contextService,
     decisionService,
