@@ -498,110 +498,35 @@ app.post('/api/chat/live/:channel/restore', async (c) => {
   chatService.restore();
   const messages = chatService.getHistory();
 
-  return c.json({ message: 'Backup restored successfully', channel, messagesRestored: messages.length });
+  return c.json({ data: messages, count: messages.length, message: 'Backup restored successfully', channel });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// AUTO-BACKUP ENDPOINTS
-// ═══════════════════════════════════════════════════════════════════════════════
+// Integrar syncEndpoints
+import { createSyncEndpoints } from './syncEndpoints';
 
-/**
- * POST /api/chat/auto-backup/start
- * Inicia o backup automatico
- */
-app.post('/api/chat/auto-backup/start', async (c) => {
-  if (!chatHistoryService) {
-    return c.json({ error: 'Database not initialized' }, 503);
-  }
+const db = getDatabase();
+const syncApp = createSyncEndpoints({ db });
+app.route('/api/sync', syncApp);
 
-  const body = await c.req.json<{ intervalMinutes?: number }>().catch(() => ({}));
-  const interval = body.intervalMinutes || 30;
+// Inicializar conexao com banco de dados e iniciar servidor
+export async function startServer(port: number = 3000): Promise<void> {
+  try {
+    // Inicializar conexao com banco de dados
+    await db.initialize();
+    console.log('[server] Database connected');
 
-  chatHistoryService.startAutoBackup(interval);
+    // Inicializar servicos
+    chatHistoryService = new ChatHistoryService(db);
 
-  return c.json({ message: `Auto-backup started with ${interval} minute interval` });
-});
-
-/**
- * POST /api/chat/auto-backup/stop
- * Para o backup automatico
- */
-app.post('/api/chat/auto-backup/stop', async (c) => {
-  if (!chatHistoryService) {
-    return c.json({ error: 'Database not initialized' }, 503);
-  }
-
-  chatHistoryService.stopAutoBackup();
-
-  return c.json({ message: 'Auto-backup stopped' });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// RECOVERY ENDPOINT (Recuperacao de emergencia)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * POST /api/chat/recovery/scan
- * Escaneia e recupera historicos de arquivos JSONL existentes
- */
-app.post('/api/chat/recovery/scan', async (c) => {
-  if (!chatHistoryService) {
-    return c.json({ error: 'Database not initialized' }, 503);
-  }
-
-  const results: Array<{ channel: string; success: boolean; messages: number; error?: string }> = [];
-
-  // Lista os canais conhecidos para recuperar
-  const knownChannels = ['default', 'pipeline-default'];
-
-  // Tambem tenta recuperar pipelines especificados no body
-  const body = await c.req.json<{ channels?: string[] }>().catch(() => ({}));
-  const channels = [...knownChannels, ...(body.channels || [])];
-
-  for (const channel of channels) {
-    const result = await chatHistoryService.syncWithJsonl(channel);
-    results.push({
-      channel,
-      success: result.success,
-      messages: result.messagesRestored,
-      error: result.error,
+    // Iniciar servidor
+    serve({
+      fetch: app.fetch,
+      port,
     });
+
+    console.log(`[server] Server running on port ${port}`);
+  } catch (error) {
+    console.error('[server] Failed to start server:', error);
+    throw error;
   }
-
-  const totalMessages = results.reduce((sum, r) => sum + r.messages, 0);
-  const successCount = results.filter(r => r.success).length;
-
-  return c.json({
-    results,
-    summary: {
-      channelsScanned: channels.length,
-      channelsRecovered: successCount,
-      totalMessagesRecovered: totalMessages,
-    },
-  });
-});
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// INICIALIZACAO DO SERVIDOR
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export async function startServer(port: number = 3456): Promise<void> {
-  // Inicializa o banco de dados
-  const dataSource = await getDatabase();
-  chatHistoryService = new ChatHistoryService(dataSource);
-
-  // Inicia o auto-backup (a cada 30 minutos por padrao)
-  chatHistoryService.startAutoBackup(30);
-
-  console.log(`[ThinkCoffee API] Database initialized`);
-  console.log(`[ThinkCoffee API] Auto-backup enabled (30 min interval)`);
-
-  serve({
-    fetch: app.fetch,
-    port,
-  }, (info) => {
-    console.log(`[ThinkCoffee API] Server running at http://localhost:${info.port}`);
-  });
 }
-
-export { app };

@@ -19,15 +19,28 @@ function copyNativeDeps() {
     }
   }
 
+  // Resolve package location — works with npm, yarn, AND pnpm
+  function findPkg(name) {
+    // 1. Direct node_modules (npm/yarn hoisted)
+    const direct = path.join(rootModules, name);
+    if (fs.existsSync(direct)) return direct;
+    // 2. require.resolve fallback (pnpm symlinks, nested deps)
+    try {
+      const pkgJson = require.resolve(name + '/package.json', { paths: [__dirname, rootModules] });
+      return path.dirname(pkgJson);
+    } catch {}
+    return null;
+  }
+
   // Packages sqlite3 needs at runtime
   const packages = ['sqlite3', 'bindings', 'file-uri-to-path'];
   for (const pkg of packages) {
-    const src = path.join(rootModules, pkg);
-    if (fs.existsSync(src)) {
+    const src = findPkg(pkg);
+    if (src) {
       copyDirSync(src, path.join(nativeDir, pkg));
       console.log(`Copied ${pkg} to dist/native/`);
     } else {
-      console.warn(`WARNING: ${pkg} not found at ${src}`);
+      console.warn(`WARNING: ${pkg} not found — native module may fail at runtime`);
     }
   }
 

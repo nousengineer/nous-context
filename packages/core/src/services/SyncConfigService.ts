@@ -209,6 +209,30 @@ export class SyncConfigService {
     }
   }
 
+  async markSyncSuccess(id: string): Promise<void> {
+    const config = await this.get(id);
+    if (!config) {
+      throw new Error('SyncConfig not found: ' + id);
+    }
+    config.lastSyncStatus = 'success';
+    config.lastSyncError = null;
+    config.failureCount = 0;
+    config.lastSyncAt = new Date();
+    await this.repo.save(config);
+  }
+
+  async markSyncFailure(id: string, error: string): Promise<void> {
+    const config = await this.get(id);
+    if (!config) {
+      throw new Error('SyncConfig not found: ' + id);
+    }
+    config.lastSyncStatus = 'failed';
+    config.lastSyncError = error;
+    config.failureCount = (config.failureCount || 0) + 1;
+    config.lastSyncAt = new Date();
+    await this.repo.save(config);
+  }
+
   async syncProject(projectId: string): Promise<SyncResult[]> {
     const configs = await this.getEnabledByProject(projectId);
     const results: SyncResult[] = [];

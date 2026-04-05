@@ -124,6 +124,9 @@ export function createSyncEndpoints(config: SyncEndpointsConfig): Hono {
         { id: 'copilot', name: 'GitHub Copilot', defaultPath: '.github/copilot-instructions.md' },
         { id: 'claude', name: 'Claude', defaultPath: 'CLAUDE.md' },
         { id: 'cursor', name: 'Cursor', defaultPath: '.cursorrules' },
+        { id: 'windsurf', name: 'Windsurf', defaultPath: '.windsurfrules' },
+        { id: 'vscode', name: 'VS Code', defaultPath: '.vscode/settings.json' },
+        { id: 'jetbrains', name: 'JetBrains', defaultPath: '.idea/README.md' },
       ],
     });
   });

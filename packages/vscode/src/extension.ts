@@ -78,6 +78,41 @@ function relPath(absPath: string): string {
 }
 
 export async function activate(context: vscode.ExtensionContext) {
+  try {
+    await _activate(context);
+  } catch (err: any) {
+    // Still register the webview provider so VS Code stops showing "Loading..."
+    const errMsg = err?.message || String(err);
+    console.error('[ThinkCoffee] Activation failed:', errMsg);
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('thinkcoffee.chat', {
+        resolveWebviewView(view: vscode.WebviewView) {
+          view.webview.html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>body{font-family:system-ui;padding:16px;color:#ccc;background:#1e1e1e}
+h3{color:#f87171;margin:0 0 8px}p{font-size:13px;line-height:1.5}
+code{background:#2d2d2d;padding:2px 6px;border-radius:3px;font-size:12px}
+button{margin-top:12px;padding:6px 14px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer}
+</style></head><body>
+<h3>ThinkCoffee - Erro na inicializacao</h3>
+<p>A extensao nao conseguiu inicializar:</p>
+<p><code>${errMsg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></p>
+<p>Tente recarregar a janela (<code>Ctrl+Shift+P</code> → <code>Reload Window</code>).</p>
+<button onclick="const vscode=acquireVsCodeApi();vscode.postMessage({command:'reload'})">Recarregar</button>
+</body></html>`;
+          view.webview.onDidReceiveMessage(msg => {
+            if (msg.command === 'reload') {
+              vscode.commands.executeCommand('workbench.action.reloadWindow');
+            }
+          });
+        },
+      })
+    );
+    vscode.window.showErrorMessage(`ThinkCoffee: ${errMsg}`);
+  }
+}
+
+async function _activate(context: vscode.ExtensionContext) {
   const db = await getDatabase();
   projectService = new ProjectService(db);
   contextService = new ContextService(db);

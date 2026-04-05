@@ -236,6 +236,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   private _sendState() {
     if (!this._view) return;
+    try {
+      this._sendStateInner();
+    } catch (err: any) {
+      console.error('[ThinkCoffee] _sendState error:', err);
+      // Send a minimal safe state so UI doesn't hang
+      this._view.webview.postMessage({
+        command: 'state',
+        data: {
+          mode: 'list',
+          pipelines: [],
+          project: null,
+          agents: AGENT_META,
+          runningAgents: [],
+          modelConfig: { mode: 'cafe-soluvel', models: {} },
+        },
+      });
+    }
+  }
+
+  private _sendStateInner() {
+    if (!this._view) return;
     const project = this._getProject();
 
     if (this._activePipelineId && project) {
