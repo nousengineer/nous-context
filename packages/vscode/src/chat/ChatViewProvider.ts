@@ -85,6 +85,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Force refresh from outside */
   refresh() { this._sendState(); }
 
+  /** Show/hide typing indicator for an agent */
+  sendTyping(role: AgentRole, label: string, active: boolean) {
+    if (!this._view) return;
+    this._view.webview.postMessage({
+      command: 'typing',
+      data: { role, label, active },
+    });
+  }
+
   // ─── State sync ────────────────────────────────────────────
 
   private _sendState() {
@@ -662,6 +671,69 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   .msg.programmer .msg-body { background: color-mix(in srgb, var(--vscode-terminal-ansiCyan) 8%, var(--vscode-input-background)); border-left: 2px solid var(--vscode-terminal-ansiCyan); }
   .msg.system .msg-body { border-left: 2px solid var(--vscode-descriptionForeground); }
 
+  /* ─── Message status ticks ─────────────────────────────── */
+  .msg-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 4px;
+    font-size: 9px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .msg-status .tick {
+    font-size: 10px;
+    line-height: 1;
+  }
+  .msg-status .tick.sent { color: var(--vscode-descriptionForeground); }
+  .msg-status .tick.delivered { color: var(--vscode-terminal-ansiGreen); }
+
+  /* ─── Typing indicator ─────────────────────────────────── */
+  .typing-indicator {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    animation: fadeIn 0.15s ease-in;
+  }
+  .typing-indicator.active { display: flex; }
+  .typing-indicator .avatar {
+    width: 20px; height: 20px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; color: #fff; flex-shrink: 0;
+  }
+  .typing-indicator .typing-label {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .typing-dots {
+    display: inline-flex;
+    gap: 3px;
+    margin-left: 2px;
+  }
+  .typing-dots span {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--vscode-descriptionForeground);
+    animation: typingBounce 1.2s infinite;
+  }
+  .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes typingBounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* ─── Send button states ────────────────────────────────── */
+  .send-btn.sending {
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  .send-btn .send-icon { display: inline; }
+  .send-btn .sending-icon { display: none; }
+  .send-btn.sending .send-icon { display: none; }
+  .send-btn.sending .sending-icon { display: inline; }
+
   /* ─── Agent task inline cards ──────────────────────────── */
   .task-card {
     margin: 6px 0 6px 25px;
@@ -802,6 +874,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   </div>
 
   <div class="messages" id="messages">
+    <div class="typing-indicator" id="typingIndicator">
+      <div class="avatar" id="typingAvatar">...</div>
+      <span class="typing-label" id="typingLabel">Pensando</span>
+      <div class="typing-dots"><span></span><span></span><span></span></div>
+    </div>
     <div class="empty" id="emptyState">
       <h3>ThinkCoffee Agents</h3>
       <p>Multi-agent pipeline for your project.<br>Chat with agents, create pipelines, approve phases.</p>
@@ -820,7 +897,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="input-wrap">
       <textarea id="input" placeholder="Message agents... (/ for commands)" rows="1"></textarea>
       <button class="send-btn" id="sendBtn" title="Send">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        <span class="send-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>
+        <span class="sending-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg></span>
       </button>
     </div>
     <div class="hints">
@@ -853,6 +931,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const agentsBar = document.getElementById('agentsBar');
   const agentChips = document.getElementById('agentChips');
   const stopAgentsBtn = document.getElementById('stopAgentsBtn');
+  const typingIndicator = document.getElementById('typingIndicator');
+  const typingAvatar = document.getElementById('typingAvatar');
+  const typingLabel = document.getElementById('typingLabel');
 
   let currentAgents = {};
 
@@ -951,18 +1032,43 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const color = AGENT_COLORS[m.sender] || '#9ca3af';
       const initials = AGENT_INITIALS[m.sender] || m.sender.substring(0, 2).toUpperCase();
 
+      const statusHtml = m.sender === 'programmer'
+        ? '<span class="msg-status"><span class="tick delivered">&#10003;&#10003;</span></span>'
+        : '';
+
       div.innerHTML =
         '<div class="msg-header">' +
           '<div class="avatar" style="background:' + color + '">' + initials + '</div>' +
           '<span class="sender" style="color:' + color + '">' + escHtml(m.senderLabel || m.sender) + '</span>' +
           '<span class="type-pill ' + m.type + '">' + m.type + '</span>' +
           '<span class="time">' + new Date(m.timestamp).toLocaleTimeString() + '</span>' +
+          statusHtml +
         '</div>' +
         '<div class="msg-body">' + renderMd(m.content) + '</div>';
       messagesEl.appendChild(div);
     }
 
+    // Keep typing indicator at bottom
+    if (typingIndicator.classList.contains('active')) {
+      messagesEl.appendChild(typingIndicator);
+    }
     messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function showTyping(role, label) {
+    const color = AGENT_COLORS[role] || '#9ca3af';
+    const init = AGENT_INITIALS[role] || role.substring(0, 2).toUpperCase();
+    typingAvatar.style.background = color;
+    typingAvatar.textContent = init;
+    typingLabel.textContent = label || 'Pensando';
+    typingLabel.style.color = color;
+    typingIndicator.classList.add('active');
+    messagesEl.appendChild(typingIndicator);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function hideTyping() {
+    typingIndicator.classList.remove('active');
   }
 
   function insertCmd(cmd) {
@@ -970,12 +1076,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     inputEl.focus();
   }
 
+  let sendTimeout = null;
+
   function send() {
     const text = inputEl.value.trim();
     if (!text) return;
+
+    // Instant visual feedback: show sending state
+    sendBtn.classList.add('sending');
+    inputEl.disabled = true;
+
     vscode.postMessage({ command: 'send', text });
     inputEl.value = '';
     inputEl.style.height = '32px';
+
+    // Re-enable after brief delay (state update will arrive)
+    if (sendTimeout) clearTimeout(sendTimeout);
+    sendTimeout = setTimeout(() => {
+      sendBtn.classList.remove('sending');
+      inputEl.disabled = false;
+      inputEl.focus();
+    }, 600);
   }
 
   sendBtn.addEventListener('click', send);
@@ -1020,8 +1141,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       renderPipeline(msg.data.pipeline);
       renderMessages(msg.data.messages);
       renderRunningAgents(msg.data.runningAgents);
+      // Show typing for running agents
+      if (msg.data.runningAgents && msg.data.runningAgents.length > 0) {
+        const first = msg.data.runningAgents[0];
+        const agentLabel = (currentAgents[first.role] && currentAgents[first.role].label) || first.role;
+        showTyping(first.role, agentLabel + ' trabalhando...');
+      } else {
+        hideTyping();
+      }
+      // Reset send button
+      sendBtn.classList.remove('sending');
+      inputEl.disabled = false;
     } else if (msg.command === 'pipeline') {
       renderPipeline(msg.data);
+    } else if (msg.command === 'typing') {
+      if (msg.data.active) {
+        showTyping(msg.data.role, msg.data.label);
+      } else {
+        hideTyping();
+      }
     }
   });
 

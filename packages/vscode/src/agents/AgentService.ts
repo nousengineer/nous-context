@@ -286,6 +286,7 @@ async function handleToolCall(
 
 export class AgentService {
   private _running = new Map<string, RunningAgent>(); // taskId -> RunningAgent
+  private _directInvocations = new Set<AgentRole>(); // roles with active direct invocations
   private _pendingMentions: { from: AgentRole; to: AgentRole; message: string }[] = [];
   private _chat: ChatService;
   private _pipelines: PipelineService;
@@ -311,11 +312,18 @@ export class AgentService {
 
   /** Get currently running agents */
   getRunning(): { role: AgentRole; taskId: string; elapsed: number }[] {
-    return Array.from(this._running.values()).map(r => ({
+    const pipelineAgents = Array.from(this._running.values()).map(r => ({
       role: r.role,
       taskId: r.taskId,
       elapsed: Date.now() - r.startedAt,
     }));
+    // Include direct invocations
+    for (const role of this._directInvocations) {
+      if (!pipelineAgents.some(a => a.role === role)) {
+        pipelineAgents.push({ role, taskId: `direct-${role}`, elapsed: 0 });
+      }
+    }
+    return pipelineAgents;
   }
 
   /** Stop a running agent */
@@ -725,6 +733,10 @@ export class AgentService {
       type: 'info',
     });
 
+    // Track direct invocation so typing indicator shows
+    this._directInvocations.add(role);
+    this._onAgentStateChange.fire();
+
     const meta = AGENT_META[role];
     const systemPrompt = `Voce e o ${meta.label} do time ThinkCoffee.\n${meta.description}\n\nProjeto: ${project.name}\nWorkspace: ${workspace}\n\nResponda em portugues (BR). Seja objetivo. NAO use emojis.`;
 
@@ -791,6 +803,8 @@ export class AgentService {
         type: 'error',
       });
     } finally {
+      this._directInvocations.delete(role);
+      this._onAgentStateChange.fire();
       cts.dispose();
     }
   }
