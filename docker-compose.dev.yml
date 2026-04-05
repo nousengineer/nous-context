@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    command: ["node", "packages/mcp-server/dist/index.js"]
+    environment:
+      NODE_ENV: development
+      THINKCOFFEE_DB_PATH: /data/data.sqlite
+      THINKCOFFEE_DATA_DIR: /data
+    volumes:
+      - thinkcoffee_dev_data:/data
+      # Live-reload: mount source for fast iteration
+      - ./packages/core/src:/app/packages/core/src:ro
+      - ./packages/mcp-server/src:/app/packages/mcp-server/src:ro
+    ports:
+      - "3000:3000"
+
+volumes:
+  thinkcoffee_dev_data:
+    driver: local

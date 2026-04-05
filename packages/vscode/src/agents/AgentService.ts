@@ -45,12 +45,17 @@ ${meta.description}
 ## Sua tarefa
 ${ctx.task.title}: ${ctx.task.description}
 
-## Regras
-- Responda em portugues (BR) a menos que o contexto exija ingles tecnico
-- Seja objetivo e pratico — foque em output acionavel
-- Se precisar de outro agente, mencione-o com @role (ex: @backend, @frontend)
-- Formate sua resposta com markdown
-- NAO use emojis — nunca`;
+## Regras criticas
+1. VOCE DEVE USAR a ferramenta write_file para criar/editar arquivos. NAO apenas descreva o que faria — FACA.
+2. Primeiro leia o codigo existente (read_file, list_files), depois escreva os arquivos.
+3. Cada deliverable (documento, codigo, config, teste) deve ser um arquivo escrito no workspace via write_file.
+4. Se sua tarefa e de arquitetura/planejamento, escreva o documento em um arquivo .md no workspace.
+5. Se sua tarefa e de codigo, escreva os arquivos .ts/.tsx/.js etc no workspace.
+6. Responda em portugues (BR) a menos que o contexto exija ingles tecnico.
+7. Seja objetivo e pratico — foque em output acionavel.
+8. Se precisar de outro agente, mencione-o com @role (ex: @backend, @frontend).
+9. Formate sua resposta com markdown.
+10. NAO use emojis — nunca.`;
 
   const prev = ctx.previousOutputs.length > 0
     ? '\n\n## Outputs anteriores dos agentes\n' + ctx.previousOutputs.map(
@@ -694,12 +699,9 @@ export class AgentService {
     const workspace = ctx.workspace;
     const tools = getAgentTools(workspace);
     const systemPrompt = buildSystemPrompt(role, ctx);
+    const kickoff = `Execute sua tarefa agora.\n\nTarefa: ${task.title}\n${task.description}\n\nIMPORTANTE: Voce DEVE usar write_file para criar os arquivos. NAO apenas descreva em texto o que faria — use as ferramentas para LER o codigo existente e ESCREVER os arquivos no workspace. Comece lendo a estrutura com list_files e read_file, depois crie/edite arquivos com write_file.`;
     const messages: vscode.LanguageModelChatMessage[] = [
-      vscode.LanguageModelChatMessage.User(systemPrompt, 'system'),
-      vscode.LanguageModelChatMessage.User(
-        `Execute sua tarefa agora. Use as ferramentas disponiveis para ler/escrever arquivos e executar comandos conforme necessario.\n\nTarefa: ${task.title}\n${task.description}`,
-        role,
-      ),
+      vscode.LanguageModelChatMessage.User(systemPrompt + '\n\n---\n\n' + kickoff),
     ];
 
     try {
@@ -743,10 +745,15 @@ export class AgentService {
         // Handle tool calls
         toolCallRounds++;
 
-        // Add assistant message with tool calls
-        messages.push(vscode.LanguageModelChatMessage.Assistant(
-          pendingToolCalls.map(tc => new vscode.LanguageModelToolCallPart(tc.callId, tc.name, tc.input)),
-        ));
+        // Add assistant message with text + tool calls (Claude requires faithful reproduction)
+        const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
+        if (textAccum) {
+          assistantParts.push(new vscode.LanguageModelTextPart(textAccum));
+        }
+        for (const tc of pendingToolCalls) {
+          assistantParts.push(new vscode.LanguageModelToolCallPart(tc.callId, tc.name, tc.input));
+        }
+        messages.push(vscode.LanguageModelChatMessage.Assistant(assistantParts));
 
         // Execute tools and add results
         const toolResults: vscode.LanguageModelToolResultPart[] = [];
@@ -825,14 +832,41 @@ export class AgentService {
     this._pendingMentions = [];
 
     for (const mention of mentions) {
-      // Check if this agent is in a future phase — if so, it will run when that phase starts
-      // For now, we just log the mention; the pipeline flow handles ordering
-      this._chat.send({
-        sender: 'system',
-        senderLabel: 'Pipeline',
-        content: `${AGENT_META[mention.from].label} solicitou @${mention.to}: ${mention.message}`,
-        type: 'info',
-      });
+      // Check if this agent already has a task in the current phase
+      const pipeline = this._pipelines.get(projectId, pipelineId);
+      if (!pipeline) continue;
+
+      const currentPhase = pipeline.phases[pipeline.currentPhase];
+      const hasTaskInPhase = currentPhase?.tasks.some(t => t.agent === mention.to);
+
+      if (hasTaskInPhase) {
+        // Agent is in the current phase — it already ran or will run
+        this._chat.send({
+          sender: 'system',
+          senderLabel: 'Pipeline',
+          content: `${AGENT_META[mention.from].label} solicitou @${mention.to}: ${mention.message}`,
+          type: 'info',
+        });
+      } else {
+        // Agent is NOT in the current phase — invoke directly with the mention context
+        this._chat.send({
+          sender: 'system',
+          senderLabel: 'Pipeline',
+          content: `${AGENT_META[mention.from].label} invocou @${mention.to}: ${mention.message}`,
+          type: 'info',
+        });
+
+        // Collect all prior outputs including the mentioning agent's output
+        const allOutputs = [...previousOutputs];
+        for (const task of currentPhase?.tasks || []) {
+          if (task.output && !allOutputs.some(o => o.agent === task.agent)) {
+            allOutputs.push({ agent: task.agent, output: task.output });
+          }
+        }
+
+        // Invoke the mentioned agent directly with context from the mention
+        await this.invokeAgent(mention.to, `Solicitacao de ${AGENT_META[mention.from].label}:\n\n${mention.message}\n\nContexto adicional dos outputs anteriores:\n${allOutputs.map(o => `### ${AGENT_META[o.agent].label}\n${o.output.substring(0, 2000)}`).join('\n\n')}`);
+      }
     }
   }
 
@@ -887,8 +921,7 @@ export class AgentService {
     const systemPrompt = `Voce e o ${meta.label} do time ThinkCoffee.\n${meta.description}\n\nProjeto: ${project.name}\nWorkspace: ${workspace}\n\nResponda em portugues (BR). Seja objetivo. NAO use emojis.`;
 
     const messages = [
-      vscode.LanguageModelChatMessage.User(systemPrompt, 'system'),
-      vscode.LanguageModelChatMessage.User(userMessage, 'user'),
+      vscode.LanguageModelChatMessage.User(systemPrompt + '\n\n---\n\n' + userMessage),
     ];
 
     const tools = getAgentTools(workspace);
@@ -928,9 +961,15 @@ export class AgentService {
         if (toolCalls.length === 0) break;
         rounds++;
 
-        messages.push(vscode.LanguageModelChatMessage.Assistant(
-          toolCalls.map(tc => new vscode.LanguageModelToolCallPart(tc.callId, tc.name, tc.input)),
-        ));
+        // Add assistant message with text + tool calls (Claude requires faithful reproduction)
+        const assistantParts: (vscode.LanguageModelTextPart | vscode.LanguageModelToolCallPart)[] = [];
+        if (textAccum) {
+          assistantParts.push(new vscode.LanguageModelTextPart(textAccum));
+        }
+        for (const tc of toolCalls) {
+          assistantParts.push(new vscode.LanguageModelToolCallPart(tc.callId, tc.name, tc.input));
+        }
+        messages.push(vscode.LanguageModelChatMessage.Assistant(assistantParts));
 
         const results: vscode.LanguageModelToolResultPart[] = [];
         for (const tc of toolCalls) {

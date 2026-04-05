@@ -29,7 +29,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   /** Currently viewed pipeline ID (null = list view) */
   private _activePipelineId: string | null = null;
   /** Auto-approve phases without user confirmation */
-  private _autoApprove = false;
+  private _autoApprove = true;
 
   /** Returns the chat service for the active pipeline (or global default) */
   private get _activeChat(): ChatService {
@@ -433,6 +433,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     // Switch to the new pipeline chat
     this._switchToPipeline(p.id);
+
+    // Auto-run the first phase
+    if (this._agentService) {
+      const config = loadAgentConfig();
+      if (config.mode === 'auto') {
+        await this._agentService.autoAssignModels(p);
+      }
+      this._agentService.runPhase(project.id, p.id);
+    }
   }
 
   private async _approvePhase() {
@@ -466,7 +475,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       type: 'info',
     });
     this._sendState();
-    vscode.commands.executeCommand('thinkcoffee.refreshPipeline');
+
+    // Auto-run the next phase if pipeline is still active
+    if (p.status !== 'completed' && p.status !== 'failed' && this._agentService) {
+      const nextPhase = p.phases[p.currentPhase];
+      if (nextPhase && nextPhase.status === 'in-progress') {
+        this._agentService.runPhase(project.id, active.id);
+      }
+    }
   }
 
   private async _rejectPhase(feedback?: string) {
@@ -1205,7 +1221,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     <div class="autoapprove-wrap">
       <label for="autoApproveToggle" title="Aprovar fases automaticamente sem pedir confirmacao">Auto-approve</label>
       <label class="toggle-switch" title="Aprovar fases automaticamente">
-        <input type="checkbox" id="autoApproveToggle">
+        <input type="checkbox" id="autoApproveToggle" checked>
         <span class="toggle-track"></span>
         <span class="toggle-thumb"></span>
       </label>
@@ -1307,7 +1323,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
   const inputArea = document.querySelector('.input-area');
   const backBtn = document.getElementById('backBtn');
 
-  let autoApproveEnabled = false;
+  let autoApproveEnabled = true;
 
   autoApproveToggle.addEventListener('change', () => {
     autoApproveEnabled = autoApproveToggle.checked;
