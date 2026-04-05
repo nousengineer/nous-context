@@ -899,6 +899,13 @@ async function main() {
       const p = pipelines.completeTask(project.id, pid, taskId, output, artifacts);
       if (!p) return notFound('Pipeline', pid);
 
+      // Auto-save agent output as context + decision for project history
+      try {
+        await pipelines.saveAgentHistory(project.id, pid, taskId, contexts, decisions);
+      } catch (err) {
+        console.error('[ThinkCoffee] Failed to save agent history:', (err as Error).message);
+      }
+
       const task = p.phases.flatMap(ph => ph.tasks).find(t => t.id === taskId);
       const phase = p.phases[p.currentPhase];
 

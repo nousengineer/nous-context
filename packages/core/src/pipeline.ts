@@ -404,6 +404,65 @@ export class PipelineService {
     return out;
   }
 
+  /**
+   * Persist the completed task's output as a context entry + decision in the project DB.
+   * Accepts service-like objects so it works without importing TypeORM directly.
+   */
+  async saveAgentHistory(
+    projectId: string,
+    pipelineId: string,
+    taskId: string,
+    contextService: { create(input: Record<string, any>): Promise<any> },
+    decisionService: { create(input: Record<string, any>): Promise<any> },
+  ): Promise<void> {
+    const p = this.get(projectId, pipelineId);
+    if (!p) return;
+
+    let task: AgentTask | undefined;
+    let phaseName = '';
+    for (const phase of p.phases) {
+      const t = phase.tasks.find(tk => tk.id === taskId);
+      if (t) { task = t; phaseName = phase.name; break; }
+    }
+    if (!task || task.status !== 'completed' || !task.output) return;
+
+    const agentLabel = AGENT_META[task.agent].label;
+
+    // Context entry — full output for searchable history
+    await contextService.create({
+      projectId,
+      key: `pipeline/${pipelineId}/${task.agent}`,
+      value: task.output,
+      category: 'agent-output',
+      priority: 3,
+      metadata: {
+        pipelineId,
+        phaseName,
+        taskId: task.id,
+        agent: task.agent,
+        agentLabel,
+        taskTitle: task.title,
+        artifacts: task.artifacts || [],
+        completedAt: task.completedAt,
+        objective: p.objective,
+      },
+    });
+
+    // Decision — records what the agent decided / did
+    await decisionService.create({
+      projectId,
+      title: `[${agentLabel}] ${task.title}`,
+      description: task.output.length > 4000 ? task.output.substring(0, 4000) + '\n\n... (truncated)' : task.output,
+      rationale: {
+        pipeline: pipelineId,
+        phase: phaseName,
+        agent: task.agent,
+        objective: p.objective,
+        artifacts: task.artifacts || [],
+      },
+    });
+  }
+
   /** Delete a pipeline */
   delete(projectId: string, pipelineId: string): boolean {
     const file = path.join(getPipelinesDir(projectId), `${pipelineId}.json`);

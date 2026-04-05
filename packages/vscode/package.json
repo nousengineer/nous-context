@@ -27,20 +27,9 @@
     "views": {
       "thinkcoffee": [
         {
-          "id": "thinkcoffee.projects",
-          "name": "Projects"
-        },
-        {
-          "id": "thinkcoffee.pipeline",
-          "name": "Pipeline"
-        },
-        {
-          "id": "thinkcoffee.context",
-          "name": "Context"
-        },
-        {
-          "id": "thinkcoffee.decisions",
-          "name": "Decisions"
+          "type": "webview",
+          "id": "thinkcoffee.chat",
+          "name": "Agents"
         }
       ]
     },
@@ -139,43 +128,17 @@
       ],
       "view/title": [
         {
-          "command": "thinkcoffee.refreshProjects",
-          "when": "view == thinkcoffee.projects",
-          "group": "navigation"
-        },
-        {
-          "command": "thinkcoffee.createProject",
-          "when": "view == thinkcoffee.projects",
-          "group": "navigation"
-        },
-        {
-          "command": "thinkcoffee.openOtherProject",
-          "when": "view == thinkcoffee.projects",
-          "group": "navigation"
-        },
-        {
           "command": "thinkcoffee.createPipeline",
-          "when": "view == thinkcoffee.pipeline",
+          "when": "view == thinkcoffee.chat",
           "group": "navigation"
         },
         {
           "command": "thinkcoffee.refreshPipeline",
-          "when": "view == thinkcoffee.pipeline",
+          "when": "view == thinkcoffee.chat",
           "group": "navigation"
         }
       ],
-      "view/item/context": [
-        {
-          "command": "thinkcoffee.approvePhase",
-          "when": "viewItem == phase-awaiting",
-          "group": "inline"
-        },
-        {
-          "command": "thinkcoffee.rejectPhase",
-          "when": "viewItem == phase-awaiting",
-          "group": "inline"
-        }
-      ]
+      "view/item/context": []
     }
   },
   "scripts": {

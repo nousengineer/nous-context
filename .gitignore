@@ -2,7 +2,7 @@
 node_modules/
 package-lock.json
 yarn.lock
-
+*.vsix
 # Environment variables
 .env
 .env.local
