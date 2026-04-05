@@ -274,6 +274,30 @@ export class PipelineService {
     return phase.tasks.filter(t => t.agent === agent);
   }
 
+  /** Reset in-progress tasks to pending so they can be re-run (for resume after restart) */
+  resetStaleTasks(projectId: string, pipelineId: string): Pipeline | null {
+    const p = this.get(projectId, pipelineId);
+    if (!p) return null;
+
+    const phase = p.phases[p.currentPhase];
+    if (!phase || phase.status !== 'in-progress') return p;
+
+    let changed = false;
+    for (const task of phase.tasks) {
+      if (task.status === 'in-progress') {
+        task.status = 'pending';
+        task.startedAt = undefined;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      p.updatedAt = new Date().toISOString();
+      savePipeline(p);
+    }
+    return p;
+  }
+
   /** Start working on a task */
   startTask(projectId: string, pipelineId: string, taskId: string): Pipeline | null {
     const p = this.get(projectId, pipelineId);

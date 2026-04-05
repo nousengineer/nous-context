@@ -75,7 +75,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.command) {
-        case 'send': await this._handleMessage(msg.text); break;
+        case 'send': this._handleMessage(msg.text); break;
         case 'ready': this._sendState(); break;
         case 'clear': this._activeChat.clear(); this._sendState(); break;
         case 'approve': this._approvePhase(); break;
@@ -104,6 +104,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
   /** Force refresh from outside */
   refresh() { this._sendState(); }
+
+  /** Resume any incomplete pipelines — called once on activation */
+  async resumeIncomplete() {
+    const project = this._getProject();
+    if (!project || !this._agentService) return;
+
+    const active = this._pipelines.getActive(project.id);
+    if (!active) return;
+
+    const currentPhase = active.phases[active.currentPhase];
+    if (!currentPhase) return;
+
+    // Switch to the active pipeline chat
+    this._switchToPipeline(active.id);
+
+    if (currentPhase.status === 'in-progress') {
+      // Phase was in-progress when VS Code closed — reset stale tasks and re-run
+      this._pipelines.resetStaleTasks(project.id, active.id);
+
+      this._activeChat.send({
+        sender: 'system',
+        senderLabel: 'Pipeline',
+        content: `Retomando pipeline: **${active.objective}**\nFase atual: **${currentPhase.name}** (${currentPhase.agents.map(a => AGENT_META[a].label).join(', ')})`,
+        type: 'info',
+      });
+
+      const config = loadAgentConfig();
+      if (config.mode === 'auto') {
+        await this._agentService.autoAssignModels(active);
+      }
+      this._agentService.runPhase(project.id, active.id);
+
+    } else if (currentPhase.status === 'awaiting-approval' && this._autoApprove) {
+      // Was awaiting approval — auto-approve and continue
+      this._activeChat.send({
+        sender: 'system',
+        senderLabel: 'Pipeline',
+        content: `Retomando pipeline: **${active.objective}**\nFase **${currentPhase.name}** aguardava aprovacao — auto-aprovando.`,
+        type: 'info',
+      });
+      this._approvePhase();
+    } else if (currentPhase.status === 'awaiting-approval') {
+      // Awaiting approval but auto-approve is off — just show state
+      this._activeChat.send({
+        sender: 'system',
+        senderLabel: 'Pipeline',
+        content: `Pipeline ativa: **${active.objective}**\nFase **${currentPhase.name}** aguardando aprovacao.`,
+        type: 'info',
+      });
+      this._sendState();
+    }
+  }
 
   /** Expose active chat for AgentService to write to */
   getActiveChat(): ChatService { return this._activeChat; }
@@ -314,15 +366,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } else if (trimmed.startsWith('@files ')) {
       await this._handleFiles(trimmed.slice(7));
     } else if (trimmed.startsWith('/pipeline ')) {
-      await this._createPipeline(trimmed.slice(10));
+      this._createPipeline(trimmed.slice(10));
     } else if (trimmed === '/approve') {
-      await this._approvePhase();
+      this._approvePhase();
     } else if (trimmed.startsWith('/reject ')) {
-      await this._rejectPhase(trimmed.slice(8));
+      this._rejectPhase(trimmed.slice(8));
     } else if (trimmed === '/status') {
       this._showPipelineStatus();
     } else if (trimmed === '/run') {
-      await this._runCurrentPhase();
+      this._runCurrentPhase();
     } else if (trimmed === '/stop') {
       this._stopAllAgents();
     } else if (trimmed === '/models') {
@@ -332,7 +384,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     } else {
       // Regular message — if in list view, treat as new pipeline objective
       if (!this._activePipelineId) {
-        await this._createPipeline(trimmed);
+        this._createPipeline(trimmed);
       } else {
         this._activeChat.send({
           sender: 'programmer',

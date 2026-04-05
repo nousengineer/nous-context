@@ -130,6 +130,11 @@ export async function activate(context: vscode.ExtensionContext) {
   chatProvider.setAgentService(agentService);
   context.subscriptions.push({ dispose: () => agentService.dispose() });
 
+  // ─── Resume incomplete pipelines after a short delay ────────
+  setTimeout(() => {
+    chatProvider.resumeIncomplete();
+  }, 3000);
+
   // Commands
   context.subscriptions.push(
 
