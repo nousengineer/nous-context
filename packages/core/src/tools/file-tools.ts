@@ -488,7 +488,7 @@ function matchesGlob(filePath: string, glob: string): boolean {
 async function logAndReturn(
   ctx: ToolContext,
   toolName: ToolName,
-  input: Record<string, unknown>,
+  input: unknown,
   startTime: number,
   result: ToolResult,
   isDryRun = false
@@ -502,7 +502,7 @@ async function logAndReturn(
       taskId: ctx.taskId,
       agentRole: ctx.agentRole,
       toolName,
-      input,
+      input: input as Record<string, unknown>,
       output: result.output || result.error || '',
       result: result.success ? 'success' : 'error',
       durationMs,
