@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ChatService, PipelineService, ContextService, DecisionService, AGENT_META, loadAgentConfig, DEFAULT_AGENT_MODELS } from '@thinkcoffee/core';
+import { ChatService, PipelineService, ContextService, DecisionService, AGENT_META, loadAgentConfig, DEFAULT_AGENT_MODELS, QUALITY_PRESETS } from '@thinkcoffee/core';
 import type { ChatMessage, Pipeline, AgentRole } from '@thinkcoffee/core';
 import type { AgentService } from '../agents/AgentService';
 import { execSync } from 'child_process';
@@ -255,7 +255,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
       const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
       return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
     });
-    this._systemMsg(`Modelos (modo: **${config.mode}**):\n\n${lines.join('\n')}`, 'info');
+    const presetData = (QUALITY_PRESETS as any)[config.mode];
+    const header = presetData
+      ? `**${presetData.label}** — ${presetData.subtitle}`
+      : `Modo: **${config.mode}**`;
+    this._systemMsg(`${header}\n\n${lines.join('\n')}`, 'info');
   }
 
   private _showRunningAgents() {

@@ -13,10 +13,12 @@ import {
   loadAgentConfig,
   saveAgentConfig,
   setAgentModel,
+  applyQualityPreset,
   AVAILABLE_MODELS,
   DEFAULT_AGENT_MODELS,
+  QUALITY_PRESETS,
 } from '@thinkcoffee/core';
-import type { Project, AgentRole } from '@thinkcoffee/core';
+import type { Project, AgentRole, QualityPreset } from '@thinkcoffee/core';
 import { ChatViewProvider } from './chat/ChatViewProvider';
 import { AgentService } from './agents/AgentService';
 import fs from 'fs';
@@ -452,13 +454,52 @@ export async function activate(context: vscode.ExtensionContext) {
     // ─── Configure Agent Models ──────────────────────────────
     vscode.commands.registerCommand('thinkcoffee.configureAgentModels', async () => {
       const config = loadAgentConfig();
+      const presetKeys = Object.keys(QUALITY_PRESETS) as QualityPreset[];
 
       const modeChoice = await vscode.window.showQuickPick([
-        { label: 'Manual', description: 'Voce escolhe o modelo de cada agente', value: 'manual' as const },
-        { label: 'Auto (PM Opus decide)', description: 'O PM (Opus) analisa o pipeline e atribui modelos', value: 'auto' as const },
-      ], { placeHolder: 'Modo de configuracao de modelos' });
-      if (!modeChoice) return;
+        // Quality presets first
+        ...presetKeys.map(key => {
+          const p = QUALITY_PRESETS[key];
+          return {
+            label: p.label,
+            description: p.subtitle,
+            detail: p.description,
+            value: key as string,
+          };
+        }),
+        // Separator
+        { label: '', description: '', detail: '', value: '', kind: vscode.QuickPickItemKind.Separator } as any,
+        // Manual / Auto
+        { label: 'Manual', description: 'Voce escolhe o modelo de cada agente, um por um', value: 'manual' },
+        { label: 'Auto (PM Opus decide)', description: 'O PM (Opus 4.6) analisa o pipeline e atribui modelos', value: 'auto' },
+      ], { placeHolder: 'Escolha o modo de qualidade do cafe', matchOnDetail: true });
+      if (!modeChoice || !modeChoice.value) return;
 
+      // Quality preset
+      if (modeChoice.value in QUALITY_PRESETS) {
+        const preset = modeChoice.value as QualityPreset;
+        const applied = applyQualityPreset(preset);
+        const p = QUALITY_PRESETS[preset];
+
+        const roles: AgentRole[] = ['product-manager', 'architect', 'backend', 'frontend', 'devops', 'qa', 'code-review'];
+        const lines = roles.map(r => {
+          const model = applied.models[r];
+          const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
+          return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
+        });
+
+        chat.send({
+          sender: 'system',
+          senderLabel: 'Config',
+          content: `**${p.label}** — ${p.subtitle}\n\n${p.description}\n\n${lines.join('\n')}`,
+          type: 'info',
+        });
+        chatProvider.refresh();
+        vscode.window.showInformationMessage(`Modo "${p.label}" ativado.`);
+        return;
+      }
+
+      // Auto mode
       if (modeChoice.value === 'auto') {
         config.mode = 'auto';
         saveAgentConfig(config);
@@ -579,10 +620,12 @@ export async function activate(context: vscode.ExtensionContext) {
         const locked = r === 'product-manager' ? ' (obrigatorio)' : '';
         return `- **${AGENT_META[r].label}**: \`${model}\`${locked}`;
       });
+      const presetLabel = (QUALITY_PRESETS as any)[config.mode]?.label;
+      const modeLabel = presetLabel ? `**${presetLabel}** (${config.mode})` : `**${config.mode}**`;
       chat.send({
         sender: 'system',
         senderLabel: 'Config',
-        content: `Modelos dos agentes (modo: **${config.mode}**):\n\n${lines.join('\n')}`,
+        content: `Modo: ${modeLabel}\n\n${lines.join('\n')}`,
         type: 'info',
       });
       chatProvider.refresh();

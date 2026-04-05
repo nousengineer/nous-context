@@ -31,6 +31,7 @@ export type { Pipeline, PipelinePhase, AgentTask, AgentRole, PhaseStatus, TaskSt
 // Agent Config
 export {
   loadAgentConfig, saveAgentConfig, getModelForAgent, setAgentModel,
-  DEFAULT_AGENT_MODELS, AVAILABLE_MODELS,
+  applyQualityPreset, isQualityPreset,
+  DEFAULT_AGENT_MODELS, AVAILABLE_MODELS, QUALITY_PRESETS,
 } from './agent-config';
-export type { AgentModelConfig, PMModelAssignment, ModelFamily } from './agent-config';
+export type { AgentModelConfig, PMModelAssignment, ModelFamily, QualityPreset } from './agent-config';

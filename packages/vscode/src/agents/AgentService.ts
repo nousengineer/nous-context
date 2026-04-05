@@ -69,7 +69,7 @@ function buildPMAutoAssignPrompt(objective: string, phases: { name: string; agen
   const models = AVAILABLE_MODELS.map(m => `- \`${m.family}\` (${m.label}, tier: ${m.tier})`).join('\n');
   const agents = phases.flatMap(p => p.agents).map(a => `- ${a}: ${AGENT_META[a].description}`).join('\n');
 
-  return `Voce e o Product Manager (rodando em claude-opus-4).
+  return `Voce e o Product Manager (rodando em claude-opus-4.6).
 Seu trabalho agora e ESCOLHER qual modelo de IA cada agente do pipeline deve usar.
 
 ## Objetivo do pipeline
@@ -82,11 +82,12 @@ ${agents}
 ${models}
 
 ## Regras de escolha
-- PM (voce) SEMPRE usa claude-opus-4 (ja definido, nao mude)
-- Para tarefas complexas de raciocinio/arquitetura: use claude-opus-4 ou o3-mini
-- Para tarefas de implementacao padrao: use claude-sonnet-4 ou gpt-4o
-- Para tarefas simples/repetitivas: use gpt-4o-mini
-- Code Review deve ser um modelo forte (opus ou sonnet)
+- PM (voce) SEMPRE usa claude-opus-4.6 (ja definido, nao mude)
+- Para tarefas complexas de raciocinio/arquitetura: use claude-opus-4.5, claude-opus-4.6, gemini-2.5-pro ou gemini-3.1-pro
+- Para implementacao de codigo: use gpt-5.3-codex, gpt-5.2-codex ou grok-code-fast-1
+- Para tarefas padrao: use claude-sonnet-4.6, claude-sonnet-4.5 ou gpt-5.2
+- Para tarefas leves/rapidas: use claude-haiku-4.5, gpt-5.4-mini, gpt-5-mini ou raptor-mini
+- Code Review deve ser um modelo forte (opus ou gemini pro)
 
 Responda APENAS com JSON valido, sem markdown. Formato:
 [{"role": "architect", "model": "claude-opus-4", "reason": "arquitetura complexa"}, ...]
@@ -354,11 +355,11 @@ export class AgentService {
     });
 
     try {
-      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4' });
+      const [model] = await vscode.lm.selectChatModels({ vendor: 'copilot', family: 'claude-opus-4.6' });
       if (!model) {
         this._chat.send({
           sender: 'system', senderLabel: 'System',
-          content: 'claude-opus-4 nao disponivel. Usando configuracao padrao.',
+          content: 'claude-opus-4.6 nao disponivel. Usando configuracao padrao.',
           type: 'error',
         });
         return null;
@@ -405,7 +406,7 @@ export class AgentService {
       this._chat.send({
         sender: 'product-manager',
         senderLabel: 'PM (Opus)',
-        content: `Modelos atribuidos pelo PM:\n\n${report}\n\n- **Product Manager**: \`claude-opus-4\` — obrigatorio`,
+        content: `Modelos atribuidos pelo PM:\n\n${report}\n\n- **Product Manager**: \`claude-opus-4.6\` --- obrigatorio`,
         type: 'response',
       });
 
