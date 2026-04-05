@@ -6,6 +6,7 @@
 ---
 
 ## Table of Contents
+
 1. [Project Structure](#project-structure)
 2. [Implemented Components](#implemented-components)
 3. [Feature Implementation Status](#feature-implementation-status)
@@ -44,8 +45,10 @@ frontend/src/
 ## Implemented Components
 
 ### ✅ 1. ProjectList.tsx
+
 **Purpose**: Displays all projects in a sidebar list  
 **Features**:
+
 - Shows project name and counts of context entries/decisions
 - Selectable buttons with active state styling
 - Click handler to select project for detail view
@@ -56,8 +59,10 @@ frontend/src/
 ---
 
 ### ✅ 2. ProjectDetail.tsx
+
 **Purpose**: Main view showing selected project with tabs for contexts and decisions  
 **Features**:
+
 - Displays project header with name, description, status, creation date
 - Two tabs: "Context Entries" and "Decisions"
 - Context tab: Shows context entry count, add button, list of entries
@@ -70,8 +75,10 @@ frontend/src/
 ---
 
 ### ✅ 3. ProjectList.tsx
+
 **Purpose**: List view for all context entries in a project  
 **Features**:
+
 - Sorts entries by priority (highest first)
 - Color-coded cards by category (architecture, requirements, dependencies, standards, general)
 - Shows category badge and creation date
@@ -83,8 +90,10 @@ frontend/src/
 ---
 
 ### ✅ 4. DecisionList.tsx
+
 **Purpose**: Display all decisions for a project  
 **Features**:
+
 - Shows decision title and status badge
 - Displays full description text
 - Creation date for each decision
@@ -96,8 +105,10 @@ frontend/src/
 ---
 
 ### ✅ 5. CreateProjectForm.tsx
+
 **Purpose**: Modal/inline form for creating new projects  
 **Features**:
+
 - Text input for project name (required)
 - Textarea for description (optional)
 - Form validation (prevents submit if name empty)
@@ -112,8 +123,10 @@ frontend/src/
 ---
 
 ### ✅ 6. CreateContextForm.tsx
+
 **Purpose**: Form to add context entries to a project  
 **Features**:
+
 - Key input (required)
 - Value textarea (required)
 - Category dropdown (5 categories: general, architecture, requirements, dependencies, standards)
@@ -129,8 +142,10 @@ frontend/src/
 ---
 
 ### ✅ 7. CreateDecisionForm.tsx
+
 **Purpose**: Form to record architectural decisions  
 **Features**:
+
 - Title input (required)
 - Description textarea (required) - for rationale & details
 - Form validation
@@ -144,26 +159,27 @@ frontend/src/
 ---
 
 ### ✅ 8. ApiKeyManager.tsx
+
 **Purpose**: Manage API keys for external tool integration  
 **Features**:
+
 - **Generate** section:
   - Text input for key name
   - Generate button
   - Shows newly generated key once (security: won't display again)
   - Copy to clipboard button
   - Dismiss button
-  
 - **Active Keys** section:
   - List all active API keys
   - Show key name, creation date, last used date
   - Revoke button with confirmation dialog
   - Refetches after revoke
-  
 - **Usage Example**:
   - Shows curl command example for using the API key
   - Displays endpoint and headers needed
 
-**GraphQL**: 
+**GraphQL**:
+
 - Query: `GET_API_KEYS` - fetches keys for project
 - Mutation: `GENERATE_API_KEY` - creates new key
 - Mutation: `REVOKE_API_KEY` - revokes a key
@@ -174,8 +190,10 @@ frontend/src/
 ---
 
 ### ✅ 9. ContextExport.tsx
+
 **Purpose**: Export project context in multiple formats for AI tool integration  
 **Features**:
+
 - Format selector buttons (JSON, Markdown, Plain Text)
 - Live preview textarea showing exported content
 - Copy to clipboard button with "Copied!" feedback
@@ -184,12 +202,14 @@ frontend/src/
 - Emojis in helptext note and section headers
 
 **Export Formats**:
+
 - **JSON**: Structured format with project metadata, contexts by category, decisions
 - **Markdown**: Formatted with headers, categories, priority stars (⭐), status badges
 - **Plain Text**: Simple unformatted text version
 
 **Status**: Fully implemented but **NOT integrated into the UI** (not called from ProjectDetail)  
 **Code Issues**:
+
 - Uses emoji in helptext (⭐, 💡) - violates no-emoji rule in user memory
 - Uses `.slugify()` method on `project.name` which may not exist on string
 
@@ -197,22 +217,22 @@ frontend/src/
 
 ## Feature Implementation Status
 
-| Feature | Implemented | In UI | Notes |
-|---------|-------------|---------|--------|
-| View Projects | ✅ | ✅ | Working |
-| Create Projects | ✅ | ✅ | Working |
-| Delete Projects | ✅ Backend Only | ❌ | Mutation exists but no UI button |
-| View Context Entries | ✅ | ✅ | Working |
-| Create Context Entry | ✅ | ✅ | Working |
-| Delete Context Entry | ✅ Backend Only | ❌ | Mutation exists but no UI |
-| Search Context | ❌ | ❌ | Missing entirely |
-| View Decisions | ✅ | ✅ | Working |
-| Create Decision | ✅ | ✅ | Working |
-| Delete Decision | ✅ Backend Only | ❌ | Mutation exists but no UI |
-| API Key Management | ✅ | ❌ | Component created but not integrated |
-| Context Export | ✅ | ❌ | Component created but not integrated |
-| User Authentication | ❌ | ❌ | Missing entirely |
-| Real-time Sync | ❌ | ❌ | Missing entirely |
+| Feature              | Implemented     | In UI | Notes                                |
+| -------------------- | --------------- | ----- | ------------------------------------ |
+| View Projects        | ✅              | ✅    | Working                              |
+| Create Projects      | ✅              | ✅    | Working                              |
+| Delete Projects      | ✅ Backend Only | ❌    | Mutation exists but no UI button     |
+| View Context Entries | ✅              | ✅    | Working                              |
+| Create Context Entry | ✅              | ✅    | Working                              |
+| Delete Context Entry | ✅ Backend Only | ❌    | Mutation exists but no UI            |
+| Search Context       | ❌              | ❌    | Missing entirely                     |
+| View Decisions       | ✅              | ✅    | Working                              |
+| Create Decision      | ✅              | ✅    | Working                              |
+| Delete Decision      | ✅ Backend Only | ❌    | Mutation exists but no UI            |
+| API Key Management   | ✅              | ❌    | Component created but not integrated |
+| Context Export       | ✅              | ❌    | Component created but not integrated |
+| User Authentication  | ❌              | ❌    | Missing entirely                     |
+| Real-time Sync       | ❌              | ❌    | Missing entirely                     |
 
 ---
 
@@ -277,18 +297,21 @@ frontend/src/
 ### Core Feature Gaps
 
 **1. Delete Operations (Frontend)**
+
 - Backend supports deleting projects, contexts, decisions
 - Frontend has **NO buttons or UI** to trigger deletes
 - **Impact**: Users cannot remove incorrect/old data
 - **Priority**: HIGH - Blocks data management
 
 **2. Search & Filter**
+
 - No search across context entries
 - No filtering by category, priority, date
 - **Impact**: Hard to find specific context in large projects
 - **Priority**: MEDIUM - Affects usability
 
 **3. API Key Management Integration**
+
 - Component fully built but:
   - Not added to ProjectDetail component
   - No route/page for it
@@ -296,6 +319,7 @@ frontend/src/
 - **Priority**: HIGH - Blocks external tool integration
 
 **4. Context Export Integration**
+
 - Component fully built but:
   - Not added to ProjectDetail component
   - No accessible way to export context
@@ -303,6 +327,7 @@ frontend/src/
 - **Priority**: HIGH - Blocks primary feature
 
 **5. User Authentication**
+
 - No login system
 - No user identification
 - No access control
@@ -311,12 +336,14 @@ frontend/src/
 - **Priority**: CRITICAL (for production)
 
 **6. Real-time Synchronization**
+
 - No WebSocket subscriptions
 - Changes visible only after page reload
 - **Impact**: Poor collaboration experience
 - **Priority**: MEDIUM - Affects experience
 
 **7. Edit Operations**
+
 - Can only create and view (except via GraphQL)
 - No UI to edit project name/description
 - No UI to edit context entries
@@ -324,6 +351,7 @@ frontend/src/
 - **Priority**: MEDIUM - Blocks common workflows
 
 **8. Undo/Revision History**
+
 - No undo functionality
 - No version history
 - **Priority**: LOW - Enhancement
@@ -333,6 +361,7 @@ frontend/src/
 ## Code Quality Notes
 
 ### ✅ Strengths
+
 1. **Consistent styling** - All components use Tailwind CSS with dark theme
 2. **GraphQL integration** - Proper use of Apollo Client with queries/mutations
 3. **Type safety** - Components use TypeScript interfaces
@@ -346,7 +375,7 @@ frontend/src/
    - `ContextExport.tsx` line 44: Uses `⭐` for priority display
    - `ContextExport.tsx` line 59: Uses `💡` in tip text
    - **Should use**: Icon library (lucide-react) instead
-   - **Affected files**: 
+   - **Affected files**:
      - `frontend/src/components/ContextExport.tsx`
 
 2. **String Methods on Non-Objects**
@@ -390,6 +419,7 @@ frontend/src/
 ## Integration Points
 
 ### What Works Together ✅
+
 1. **App.tsx** -> **ProjectList.tsx** -> Project selection
 2. **App.tsx** -> **ProjectDetail.tsx** -> Shows selected project
 3. **ProjectDetail.tsx** -> **ContextEntryList.tsx** -> Shows contexts
@@ -399,13 +429,14 @@ frontend/src/
 7. **App.tsx** -> **CreateProjectForm.tsx** -> Add project
 
 ### What's NOT Integrated ❌
+
 1. **ApiKeyManager.tsx** - Component exists but nowhere to display it
    - **Should be added to**: ProjectDetail.tsx as a tab or modal
-   
 2. **ContextExport.tsx** - Component exists but nowhere to display it
    - **Should be added to**: ProjectDetail.tsx as a tab or button action
 
 ### Data Flow Summary
+
 ```
 App.tsx (main container)
 ├── ProjectList (sidebar)
@@ -432,14 +463,15 @@ NOT CONNECTED:
 ```typescript
 const client = new ApolloClient({
   link: new HttpLink({
-    uri: 'http://localhost:4000/graphql',
-    credentials: 'same-origin',
+    uri: "http://localhost:4000/graphql",
+    credentials: "same-origin",
   }),
   cache: new InMemoryCache(),
 });
 ```
 
 **Issues**:
+
 - Hardcoded localhost URI
 - `credentials: 'same-origin'` won't work for API keys (should use headers)
 - No error handling configuration
@@ -450,6 +482,7 @@ const client = new ApolloClient({
 ## Recommended Next Steps
 
 ### Priority 1: Critical Fixes
+
 1. ✅ Fix emoji usage in `ContextExport.tsx` (use icon library)
 2. ✅ Fix `.slugify()` error in `ContextExport.tsx`
 3. ✅ Integrate **ApiKeyManager** into ProjectDetail
@@ -457,12 +490,14 @@ const client = new ApolloClient({
 5. ✅ Add delete buttons for projects, contexts, decisions
 
 ### Priority 2: Important Features
+
 1. Add **Search & Filter** for context entries
 2. Add **Edit** functionality for projects, contexts, decisions
 3. Add **Error Boundary** to prevent crashes
 4. Improve **Apollo Client** setup with environment variables
 
 ### Priority 3: Nice to Have
+
 1. Add **Dashboard/Overview** page
 2. Add **Loading skeletons** for better UX
 3. Add **User authentication** (CRITICAL for production)
@@ -472,13 +507,13 @@ const client = new ApolloClient({
 
 ## Current Component Count
 
-| Category | Count |
-|----------|-------|
-| Implemented & Integrated | 7 |
-| Implemented but NOT Integrated | 2 |
-| Missing but defined in backend | 0 |
-| Completely missing | 8+ |
-| **Total Needed** | **17+** |
+| Category                       | Count   |
+| ------------------------------ | ------- |
+| Implemented & Integrated       | 7       |
+| Implemented but NOT Integrated | 2       |
+| Missing but defined in backend | 0       |
+| Completely missing             | 8+      |
+| **Total Needed**               | **17+** |
 
 **Overall Status**: ~41% Complete (7/17 components integrated)
 
@@ -489,6 +524,7 @@ const client = new ApolloClient({
 The ThinkCoffee frontend is **50% complete**:
 
 ### What Works ✅
+
 - Core CRUD for projects, context entries, decisions
 - Project list and detail views
 - Apollo GraphQL integration
@@ -496,6 +532,7 @@ The ThinkCoffee frontend is **50% complete**:
 - Error and loading states
 
 ### Major Gaps ❌
+
 - **2 completed components not integrated** (Api Keys, Export)
 - **No delete UI** (backend ready)
 - **No search/filtering**
@@ -506,6 +543,7 @@ The ThinkCoffee frontend is **50% complete**:
 - **Bug in export file download** (slugify method)
 
 ### Blockers 🚨
+
 1. Components created but not displayed
 2. Emoji violations in ContextExport
 3. String method error in ContextExport
