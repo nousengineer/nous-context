@@ -154,6 +154,38 @@ export function registerProjectEndpoints(server: any) {
     );
 
     server.tool(
+        'bulk_add_context',
+        'Add multiple context entries to a project in a single call.',
+        {
+            projectId: z.string().describe('Project ID'),
+            entries: z.array(z.object({
+                key: z.string().describe('Short label'),
+                value: z.string().describe('Context content'),
+                category: z.enum(['architecture', 'requirements', 'dependencies', 'standards', 'general']),
+                priority: z.number().optional(),
+            })).describe('Array of context entries to add'),
+        },
+        async ({ projectId, entries }: {
+            projectId: string;
+            entries: Array<{ key: string; value: string; category: string; priority?: number }>;
+        }) => {
+            const { contextService } = await services();
+            const results: string[] = [];
+            for (const entry of entries) {
+                const item = await contextService.create({
+                    projectId,
+                    key: entry.key,
+                    value: entry.value,
+                    category: entry.category,
+                    priority: entry.priority,
+                });
+                results.push(`[${entry.category}] ${entry.key} (${item.id})`);
+            }
+            return { content: [{ type: 'text', text: `Added ${results.length} context entries:\n${results.join('\n')}` }] };
+        }
+    );
+
+    server.tool(
         'update_context',
         'Update an existing context entry.',
         {
@@ -182,6 +214,32 @@ export function registerProjectEndpoints(server: any) {
             const { contextService } = await services();
             await contextService.delete(id);
             return { content: [{ type: 'text', text: `Context deleted: ${id}` }] };
+        }
+    );
+
+    server.tool(
+        'search_all_projects',
+        'Search context entries across ALL projects by keyword. Useful for finding information without knowing which project it belongs to.',
+        {
+            query: z.string().describe('Search query / keyword'),
+        },
+        async ({ query }: { query: string }) => {
+            const { projectService, contextService } = await services();
+            const projects = await projectService.list();
+            const results: Array<{ project: string; projectId: string; matches: any[] }> = [];
+
+            for (const project of projects) {
+                const matches = await contextService.search(project.id, query);
+                if (matches.length > 0) {
+                    results.push({ project: project.name, projectId: project.id, matches });
+                }
+            }
+
+            if (results.length === 0) {
+                return { content: [{ type: 'text', text: `No results found for "${query}" across ${projects.length} projects.` }] };
+            }
+
+            return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
         }
     );
 
@@ -352,6 +410,207 @@ export function registerProjectEndpoints(server: any) {
         async ({ projectId, pipelineId, feedback }: { projectId: string; pipelineId: string; feedback: string }) => {
             pipelineService.rejectPhase(projectId, pipelineId, feedback);
             return { content: [{ type: 'text', text: 'Phase rejected. Agents will redo with the provided feedback.' }] };
+        }
+    );
+
+    // ─── Create Project from Template ────────────────────────────
+
+    server.tool(
+        'create_project_from_template',
+        'Create a new project pre-populated with context entries from a template. Templates: "web-app", "api", "monorepo", "library", "empty".',
+        {
+            name: z.string().describe('Project name'),
+            template: z.enum(['web-app', 'api', 'monorepo', 'library', 'empty']).describe('Template type'),
+            description: z.string().optional().describe('Project description'),
+            workspace: z.string().optional().describe('Absolute path to workspace folder'),
+        },
+        async ({ name, template, description, workspace }: {
+            name: string; template: string; description?: string; workspace?: string;
+        }) => {
+            const { projectService, contextService } = await services();
+            const project = await projectService.create({ name, description: description || `${name} (${template} template)` });
+            if (workspace) {
+                await projectService.linkWorkspace(project.id, workspace);
+            }
+
+            const TEMPLATES: Record<string, Array<{ key: string; value: string; category: string }>> = {
+                'web-app': [
+                    { key: 'stack', value: 'Frontend web application (React/Vue/Svelte + bundler)', category: 'architecture' },
+                    { key: 'structure', value: 'src/ — source code\npublic/ — static assets\ntests/ — test files\ndist/ — build output', category: 'architecture' },
+                    { key: 'standards', value: 'TypeScript strict mode, ESLint, Prettier, component-based architecture', category: 'standards' },
+                    { key: 'testing', value: 'Unit tests with Vitest/Jest, E2E with Playwright/Cypress', category: 'requirements' },
+                ],
+                'api': [
+                    { key: 'stack', value: 'REST/GraphQL API backend (Node.js/Express/Fastify)', category: 'architecture' },
+                    { key: 'structure', value: 'src/routes/ — endpoints\nsrc/services/ — business logic\nsrc/models/ — data models\nsrc/middleware/ — middleware', category: 'architecture' },
+                    { key: 'standards', value: 'TypeScript, input validation (zod), error handling middleware, request logging', category: 'standards' },
+                    { key: 'security', value: 'Authentication required, rate limiting, CORS configuration, input sanitization', category: 'requirements' },
+                ],
+                'monorepo': [
+                    { key: 'stack', value: 'Monorepo with multiple packages (pnpm workspaces / turborepo)', category: 'architecture' },
+                    { key: 'structure', value: 'packages/ — individual packages\napps/ — applications\nshared/ — shared utilities\nconfigs/ — shared configs', category: 'architecture' },
+                    { key: 'standards', value: 'Shared tsconfig, consistent versioning, cross-package type safety', category: 'standards' },
+                    { key: 'dependencies', value: 'Workspace protocol (workspace:*), hoisted devDependencies, shared build tooling', category: 'dependencies' },
+                ],
+                'library': [
+                    { key: 'stack', value: 'Reusable library / npm package', category: 'architecture' },
+                    { key: 'structure', value: 'src/ — source code\ntests/ — test files\ndist/ — compiled output\nREADME.md — docs', category: 'architecture' },
+                    { key: 'standards', value: 'TypeScript declarations, semantic versioning, tree-shakeable exports, minimal dependencies', category: 'standards' },
+                    { key: 'publishing', value: 'npm publish, changelog generation, CI/CD pipeline for releases', category: 'requirements' },
+                ],
+                'empty': [],
+            };
+
+            const entries = TEMPLATES[template] || [];
+            for (const entry of entries) {
+                await contextService.create({ projectId: project.id, key: entry.key, value: entry.value, category: entry.category });
+            }
+
+            return {
+                content: [{
+                    type: 'text',
+                    text: `Project "${name}" created from "${template}" template (${project.id}) with ${entries.length} context entries.`,
+                }],
+            };
+        }
+    );
+
+    // ─── File tools ──────────────────────────────────────────────
+
+    server.tool(
+        'edit_file',
+        'Edit a file by replacing an exact string with a new string. The old string must match exactly (including whitespace/newlines). Use read_file first to get the exact content.',
+        {
+            path: z.string().describe('Relative path to the file from workspace root'),
+            workspaceRoot: z.string().describe('Absolute path to the workspace root'),
+            oldString: z.string().describe('The exact text to find and replace (must match exactly once)'),
+            newString: z.string().describe('The replacement text'),
+        },
+        async ({ path: filePath, workspaceRoot, oldString, newString }: {
+            path: string; workspaceRoot: string; oldString: string; newString: string;
+        }) => {
+            const absPath = path.resolve(workspaceRoot, filePath);
+            if (!absPath.startsWith(path.resolve(workspaceRoot))) {
+                return { content: [{ type: 'text', text: 'Error: path traversal detected. File must be inside workspace.' }] };
+            }
+            if (!fs.existsSync(absPath)) {
+                return { content: [{ type: 'text', text: `File not found: ${filePath}` }] };
+            }
+            // FIX: use split/join instead of String.replace() to avoid $ interpolation bugs
+            const raw = fs.readFileSync(absPath, 'utf-8');
+            const parts = raw.split(oldString);
+            const occurrences = parts.length - 1;
+            if (occurrences === 0) {
+                return { content: [{ type: 'text', text: `Error: oldString not found in ${filePath}. Make sure it matches exactly (including whitespace).` }] };
+            }
+            if (occurrences > 1) {
+                return { content: [{ type: 'text', text: `Error: oldString found ${occurrences} times in ${filePath}. It must match exactly once. Add more context to make it unique.` }] };
+            }
+            fs.writeFileSync(absPath, parts.join(newString), 'utf-8');
+            return { content: [{ type: 'text', text: `File edited: ${filePath} (1 replacement applied)` }] };
+        }
+    );
+
+    server.tool(
+        'read_file',
+        'Read the contents of a file with optional line range.',
+        {
+            path: z.string().describe('Relative path to the file from workspace root'),
+            workspaceRoot: z.string().describe('Absolute path to the workspace root'),
+            startLine: z.number().optional().describe('Start line (1-based)'),
+            endLine: z.number().optional().describe('End line (1-based, inclusive)'),
+        },
+        async ({ path: filePath, workspaceRoot, startLine, endLine }: {
+            path: string; workspaceRoot: string; startLine?: number; endLine?: number;
+        }) => {
+            const absPath = path.resolve(workspaceRoot, filePath);
+            if (!absPath.startsWith(path.resolve(workspaceRoot))) {
+                return { content: [{ type: 'text', text: 'Error: path traversal detected.' }] };
+            }
+            if (!fs.existsSync(absPath)) {
+                return { content: [{ type: 'text', text: `File not found: ${filePath}` }] };
+            }
+            const content = fs.readFileSync(absPath, 'utf-8');
+            const lines = content.split('\n');
+            if (startLine || endLine) {
+                const start = Math.max(1, startLine || 1);
+                const end = Math.min(lines.length, endLine || lines.length);
+                const slice = lines.slice(start - 1, end);
+                const numbered = slice.map((l, i) => `${start + i}: ${l}`).join('\n');
+                return { content: [{ type: 'text', text: `File: ${filePath} (lines ${start}-${end} of ${lines.length})\n\n${numbered}` }] };
+            }
+            return { content: [{ type: 'text', text: `File: ${filePath} (${lines.length} lines)\n\n${content}` }] };
+        }
+    );
+
+    server.tool(
+        'write_file',
+        'Create or overwrite a file in the workspace.',
+        {
+            path: z.string().describe('Relative path to the file from workspace root'),
+            workspaceRoot: z.string().describe('Absolute path to the workspace root'),
+            content: z.string().describe('File content to write'),
+        },
+        async ({ path: filePath, workspaceRoot, content }: {
+            path: string; workspaceRoot: string; content: string;
+        }) => {
+            const absPath = path.resolve(workspaceRoot, filePath);
+            if (!absPath.startsWith(path.resolve(workspaceRoot))) {
+                return { content: [{ type: 'text', text: 'Error: path traversal detected.' }] };
+            }
+            const dir = path.dirname(absPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const existed = fs.existsSync(absPath);
+            fs.writeFileSync(absPath, content, 'utf-8');
+            return { content: [{ type: 'text', text: `${existed ? 'File updated' : 'File created'}: ${filePath} (${content.length} bytes)` }] };
+        }
+    );
+
+    server.tool(
+        'list_files',
+        'List files in a directory (non-recursive by default).',
+        {
+            path: z.string().optional().describe('Relative directory path (default: root)'),
+            workspaceRoot: z.string().describe('Absolute path to the workspace root'),
+            recursive: z.boolean().optional().describe('List recursively (default: false)'),
+            maxDepth: z.number().optional().describe('Max depth for recursive listing (default: 3)'),
+        },
+        async ({ path: dirPath, workspaceRoot, recursive, maxDepth }: {
+            path?: string; workspaceRoot: string; recursive?: boolean; maxDepth?: number;
+        }) => {
+            const absDir = path.resolve(workspaceRoot, dirPath || '.');
+            if (!absDir.startsWith(path.resolve(workspaceRoot))) {
+                return { content: [{ type: 'text', text: 'Error: path traversal detected.' }] };
+            }
+            if (!fs.existsSync(absDir)) {
+                return { content: [{ type: 'text', text: `Directory not found: ${dirPath || '.'}` }] };
+            }
+            const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target', '.thinkcoffee']);
+            const results: string[] = [];
+            const limit = maxDepth ?? 3;
+
+            function walk(dir: string, prefix: string, depth: number) {
+                if (depth > limit) return;
+                let entries: fs.Dirent[];
+                try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+                entries.sort((a, b) => {
+                    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+                for (const entry of entries) {
+                    if (IGNORE.has(entry.name) || entry.name.startsWith('.')) continue;
+                    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+                    if (entry.isDirectory()) {
+                        results.push(`${rel}/`);
+                        if (recursive) walk(path.join(dir, entry.name), rel, depth + 1);
+                    } else {
+                        results.push(rel);
+                    }
+                }
+            }
+
+            walk(absDir, '', 0);
+            return { content: [{ type: 'text', text: results.join('\n') || '(empty directory)' }] };
         }
     );
 }
