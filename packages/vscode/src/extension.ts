@@ -19,7 +19,6 @@ import {
 } from '@thinkcoffee/core';
 import type { Project, AgentRole, QualityPreset } from '@thinkcoffee/core';
 import { ChatViewProvider } from './chat/ChatViewProvider';
-import { ChatHistoryView } from './chat/ChatHistoryView';
 import { AgentService } from './agents/AgentService';
 import { discoverModels } from './agents/ModelRegistry';
 import { SafetyNetPanel } from './views/SafetyNetPanel';
@@ -120,7 +119,7 @@ async function _activate(context: vscode.ExtensionContext) {
   pipelineService = new PipelineService();
 
   // Pre-warm model discovery cache (non-blocking)
-  discoverModels().catch(() => {});
+  discoverModels().catch(() => { });
 
   // ─── Auto-bind project to workspace ────────────────────────
   const wsRoot = getWorkspaceRoot();
@@ -188,13 +187,6 @@ async function _activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
       webviewOptions: { retainContextWhenHidden: true },
     })
-  );
-
-  // --- Chat History View ---
-  const chatHistoryView = new ChatHistoryView();
-  vscode.window.createTreeView('thinkcoffee-history', { treeDataProvider: chatHistoryView });
-  context.subscriptions.push(
-    vscode.commands.registerCommand('thinkcoffee.history.refresh', () => chatHistoryView.refresh())
   );
 
   // ─── Agent Service ───────────────────────────────────────────
@@ -453,7 +445,7 @@ async function _activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('thinkcoffee.openContextFile', async () => {
       // No-op without tree items — context is in the chat now
     }),
-    vscode.commands.registerCommand('thinkcoffee.viewContext', async () => {}),
+    vscode.commands.registerCommand('thinkcoffee.viewContext', async () => { }),
 
     // ─── Pipeline: Create ────────────────────────────────────
     vscode.commands.registerCommand('thinkcoffee.createPipeline', async () => {
@@ -470,7 +462,6 @@ async function _activate(context: vscode.ExtensionContext) {
       const p = pipelineService.create(project.id, objective, ws);
       vscode.window.showInformationMessage(`Pipeline created: ${p.objective}`);
       chatProvider.refresh();
-      chatHistoryView.refresh();
     }),
 
     // ─── Pipeline: Approve Phase ─────────────────────────────
@@ -510,7 +501,7 @@ async function _activate(context: vscode.ExtensionContext) {
     }),
 
     // ─── Pipeline: View Task Output (no-op, shown in chat) ──
-    vscode.commands.registerCommand('thinkcoffee.viewTaskOutput', () => {}),
+    vscode.commands.registerCommand('thinkcoffee.viewTaskOutput', () => { }),
 
     // ─── Pipeline: Refresh ───────────────────────────────────
     vscode.commands.registerCommand('thinkcoffee.refreshPipeline', () => chatProvider.refresh()),

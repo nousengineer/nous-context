@@ -37,13 +37,20 @@ function getBackupFile(channel: string): string {
   return path.join(getChatDir(), `${safe}.backup.jsonl`);
 }
 
+function getReadFile(channel: string): string {
+  const safe = channel.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return path.join(getChatDir(), `${safe}.read.json`);
+}
+
 export class ChatService {
   private filePath: string;
   private backupPath: string;
+  private readPath: string;
 
   constructor(channel: string = 'default') {
     this.filePath = getChatFile(channel);
     this.backupPath = getBackupFile(channel);
+    this.readPath = getReadFile(channel);
     if (!fs.existsSync(this.filePath)) {
       fs.writeFileSync(this.filePath, '', 'utf-8');
     }
@@ -89,25 +96,50 @@ export class ChatService {
   }
 
   getUnread(): ChatMessage[] {
+    const readIds = this.getReadIds();
     return this.getHistory().filter(m =>
-      m.sender === 'programmer' && m.type === 'request' && !m.read
+      m.sender === 'programmer' && m.type === 'request' && !readIds.has(m.id)
     );
   }
 
   markRead(messageId: string): void {
-    const msgs = this.getHistory();
-    const updated = msgs.map(m => m.id === messageId ? { ...m, read: true } : m);
-    fs.writeFileSync(this.filePath, updated.map(m => JSON.stringify(m)).join('\n') + '\n', 'utf-8');
+    const readIds = this.getReadIds();
+    readIds.add(messageId);
+    this.writeReadIds(readIds);
   }
 
   markAllRead(): void {
+    const readIds = this.getReadIds();
     const msgs = this.getHistory();
-    const updated = msgs.map(m => m.sender === 'programmer' && !m.read ? { ...m, read: true } : m);
-    fs.writeFileSync(this.filePath, updated.map(m => JSON.stringify(m)).join('\n') + '\n', 'utf-8');
+    for (const m of msgs) {
+      if (m.sender === 'programmer' && !readIds.has(m.id)) {
+        readIds.add(m.id);
+      }
+    }
+    this.writeReadIds(readIds);
+  }
+
+  private getReadIds(): Set<string> {
+    try {
+      if (fs.existsSync(this.readPath)) {
+        const data = JSON.parse(fs.readFileSync(this.readPath, 'utf-8'));
+        return new Set(Array.isArray(data) ? data : []);
+      }
+    } catch {
+      // corrupt file — start fresh
+    }
+    return new Set();
+  }
+
+  private writeReadIds(ids: Set<string>): void {
+    const tmp = this.readPath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify([...ids]), 'utf-8');
+    fs.renameSync(tmp, this.readPath);
   }
 
   clear(): void {
     fs.writeFileSync(this.filePath, '', 'utf-8');
+    try { fs.unlinkSync(this.readPath); } catch { }
   }
 
   addMessageDirectly(message: ChatMessage): void {
@@ -117,7 +149,7 @@ export class ChatService {
   /** Watch for new messages (returns close function) */
   watch(callback: (msgs: ChatMessage[]) => void): () => void {
     let lastSize = 0;
-    try { lastSize = fs.statSync(this.filePath).size; } catch {}
+    try { lastSize = fs.statSync(this.filePath).size; } catch { }
 
     const watcher = fs.watchFile(this.filePath, { interval: 500 }, (curr) => {
       if (curr.size > lastSize) {

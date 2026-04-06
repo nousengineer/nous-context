@@ -30,10 +30,6 @@
           "type": "webview",
           "id": "thinkcoffee.chat",
           "name": "Agents"
-        },
-        {
-          "id": "thinkcoffee-history",
-          "name": "History"
         }
       ]
     },
@@ -234,7 +230,11 @@
       "properties": {
         "thinkcoffee.diffPreview": {
           "type": "string",
-          "enum": ["always", "existing-only", "never"],
+          "enum": [
+            "always",
+            "existing-only",
+            "never"
+          ],
           "default": "existing-only",
           "description": "When to show diff preview before write_file operations.",
           "enumDescriptions": [
@@ -245,7 +245,11 @@
         },
         "thinkcoffee.commandConfirmation": {
           "type": "string",
-          "enum": ["always", "destructive-only", "never"],
+          "enum": [
+            "always",
+            "destructive-only",
+            "never"
+          ],
           "default": "destructive-only",
           "description": "When to ask for confirmation before running shell commands.",
           "enumDescriptions": [
