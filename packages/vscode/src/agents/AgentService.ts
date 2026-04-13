@@ -1050,7 +1050,7 @@ export class AgentService {
 
     const config = loadAgentConfig();
     const activePreset = isQualityPreset(config.mode) ? config.mode as QualityPreset : undefined;
-    const pmModel = activePreset ? getPMModelForPreset(activePreset) : 'claude-opus-4.6';
+    const pmModel = activePreset ? getPMModelForPreset(activePreset) : getModelForAgent('product-manager', config);
 
     this._pipelineChat(pipeline.id).send({
       sender: 'product-manager',
@@ -1070,7 +1070,7 @@ export class AgentService {
         return config;
       }
 
-      const dynamicModels = await discoverModels();
+      const dynamicModels = (await discoverModels()).filter(m => m.costMultiplier === 0);
       const prompt = buildPMAutoAssignPrompt(
         pipeline.objective,
         pipeline.phases.map(p => ({ name: p.name, agents: p.agents })),
@@ -1096,13 +1096,17 @@ export class AgentService {
 
       const assignments: PMModelAssignment[] = JSON.parse(jsonMatch[0]);
 
-      // Validate PM assignments against active preset cost tier (skip for 'auto' mode)
+      // Validate PM assignments: extension policy is free-only (0x)
       const presetData = activePreset ? QUALITY_PRESETS[activePreset] : null;
       for (const a of assignments) {
         if (a.role !== 'product-manager') {
           const cost = getModelCost(a.model);
-          if (presetData && config.mode !== 'auto' && (cost < presetData.costRange.min || cost > presetData.costRange.max)) {
-            // PM picked a model outside the preset's cost range — override with preset default
+          if (cost !== 0) {
+            const fallbackModel = QUALITY_PRESETS['free-tier'].models[a.role as AgentRole] || getModelForAgent(a.role as AgentRole, config);
+            a.model = fallbackModel;
+            a.reason += ' (modelo pago bloqueado; substituido por modelo gratuito)';
+          } else if (presetData && config.mode !== 'auto' && (cost < presetData.costRange.min || cost > presetData.costRange.max)) {
+            // Keep old preset guard for non-auto modes.
             const presetDefault = QUALITY_PRESETS[activePreset!].models[a.role as AgentRole];
             if (presetDefault) {
               a.model = presetDefault;
@@ -1120,10 +1124,11 @@ export class AgentService {
         `- **${AGENT_META[a.role as AgentRole]?.label || a.role}**: \`${a.model}\` — ${a.reason}`
       ).join('\n');
 
+      const effectivePMModel = getModelForAgent('product-manager', config);
       this._pipelineChat(pipeline.id).send({
         sender: 'product-manager',
         senderLabel: agentLabel('product-manager', pmModel),
-        content: `Modelos atribuidos pelo PM:\n\n${report}\n\n- **Product Manager**: \`${pmModel}\``,
+        content: `Modelos atribuidos pelo PM:\n\n${report}\n\n- **Product Manager**: \`${effectivePMModel}\``,
         type: 'response',
       });
 
@@ -1222,15 +1227,15 @@ export class AgentService {
     const config = loadAgentConfig();
     const modelFamily = getModelForAgent(role, config);
 
-    // Cost tier guard: ensure model respects active preset (skip for 'auto' mode)
+    // Cost tier guard + hard free-only policy.
     const activePreset = isQualityPreset(config.mode) ? config.mode as QualityPreset : undefined;
     const presetData = activePreset ? QUALITY_PRESETS[activePreset] : null;
     let effectiveFamily = modelFamily;
-    if (presetData && config.mode !== 'auto') {
-      const cost = getModelCost(modelFamily);
-      if (cost > presetData.costRange.max) {
-        effectiveFamily = presetData.models[role] || modelFamily;
-      }
+    const modelCost = getModelCost(modelFamily);
+    if (modelCost !== 0) {
+      effectiveFamily = QUALITY_PRESETS['free-tier'].models[role] || modelFamily;
+    } else if (presetData && config.mode !== 'auto' && modelCost > presetData.costRange.max) {
+      effectiveFamily = presetData.models[role] || modelFamily;
     }
 
     // Select model
@@ -1242,10 +1247,11 @@ export class AgentService {
         const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
         if (!allModels.length) throw new Error('Nenhum modelo Copilot disponivel');
 
-        const maxCost = presetData?.costRange.max ?? Infinity;
+        const maxCost = 0;
         const ranked = presetData?.ranking ?? [];
         const affordable = allModels.filter(m => getModelCost(m.family) <= maxCost);
-        const pool = affordable.length ? affordable : allModels; // absolute last resort
+        const pool = affordable.length ? affordable : allModels.filter(m => getModelCost(m.family) === 0);
+        if (!pool.length) throw new Error('Nenhum modelo gratuito (0x) disponivel');
 
         // Prefer models from the preset ranking (order matters)
         const byRanking = ranked
@@ -1520,15 +1526,15 @@ export class AgentService {
     const config = loadAgentConfig();
     const modelFamily = getModelForAgent(role, config);
 
-    // Cost tier guard for direct invocations too
+    // Cost tier guard for direct invocations + hard free-only policy.
     const directPreset = isQualityPreset(config.mode) ? config.mode as QualityPreset : undefined;
     const directPresetData = directPreset ? QUALITY_PRESETS[directPreset] : null;
     let directFamily = modelFamily;
-    if (directPresetData && config.mode !== 'auto') {
-      const cost = getModelCost(modelFamily);
-      if (cost > directPresetData.costRange.max) {
-        directFamily = directPresetData.models[role] || modelFamily;
-      }
+    const directCost = getModelCost(modelFamily);
+    if (directCost !== 0) {
+      directFamily = QUALITY_PRESETS['free-tier'].models[role] || modelFamily;
+    } else if (directPresetData && config.mode !== 'auto' && directCost > directPresetData.costRange.max) {
+      directFamily = directPresetData.models[role] || modelFamily;
     }
 
     let model: vscode.LanguageModelChat;
@@ -1538,10 +1544,11 @@ export class AgentService {
         const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
         if (!allModels.length) throw new Error('Nenhum modelo Copilot disponivel');
 
-        const maxCost = directPresetData?.costRange.max ?? Infinity;
+        const maxCost = 0;
         const ranked = directPresetData?.ranking ?? [];
         const affordable = allModels.filter(m => getModelCost(m.family) <= maxCost);
-        const pool = affordable.length ? affordable : allModels;
+        const pool = affordable.length ? affordable : allModels.filter(m => getModelCost(m.family) === 0);
+        if (!pool.length) throw new Error('Nenhum modelo gratuito (0x) disponivel');
 
         const byRanking = ranked
           .map(fam => pool.find(m => m.family === fam))
