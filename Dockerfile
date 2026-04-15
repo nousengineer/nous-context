@@ -1,4 +1,4 @@
-﻿# Multi-stage build para otimizar tamanho da imagem
+# Multi-stage build para otimizar tamanho da imagem
 
 # Stage 1: Build
 FROM node:20-alpine AS builder

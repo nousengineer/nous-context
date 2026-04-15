@@ -1,4 +1,4 @@
-﻿version: '3.8'
+version: '3.8'
 
 # ThinkCoffee - Docker Compose Configuration
 # Services: app, postgres, redis, pgadmin (dev only)
@@ -145,36 +145,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  # pgAdmin - Development only
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: thinkcoffee-pgadmin
-    
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@thinkcoffee.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-    
-    ports:
-      - "5050:80"
-    
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    
-    networks:
-      - thinkcoffee-network
-    
-    restart: unless-stopped
-    
-    profiles:
-      - dev
-    
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
 
 volumes:
   postgres_data:
