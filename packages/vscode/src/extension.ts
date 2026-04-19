@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { AutonomousRuntime } from './agents/AutonomousRuntime';
 import type { WorkflowDefinition } from './agents/AutonomousRuntime';
 import { OrchestratorClient, OrchestratorHttpError } from './utils/orchestratorClient';
-import { AdvancedAgentsPanel, AgentsSidebarProvider, AdvancedAgentsSidebarProvider } from './views';
+import { ChatSidebarProvider } from './views';
 
 let runtime: AutonomousRuntime | undefined;
 const RUN_ID_KEY = 'thinkcoffee.currentOrchestratorRunId';
@@ -22,11 +22,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   out.appendLine('[ThinkCoffee] Extension activated');
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(AgentsSidebarProvider.viewType, new AgentsSidebarProvider()),
-    vscode.window.registerWebviewViewProvider(
-      AdvancedAgentsSidebarProvider.viewType,
-      new AdvancedAgentsSidebarProvider(),
-    ),
+    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, new ChatSidebarProvider()),
   );
 
   const register = (command: string, handler: (...args: unknown[]) => unknown) => {
@@ -514,10 +510,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const result = await runtime.adaptiveReasoning(`Run capability: ${action}`, 'standard');
     runtime.getOutput().appendLine(result.summary);
     runtime.getOutput().show(true);
-  });
-
-  register('thinkcoffee.openAdvancedAgents', async () => {
-    AdvancedAgentsPanel.createOrShow(context.extensionUri);
   });
 
   const pmDelegated: PmDelegatedCommand[] = [

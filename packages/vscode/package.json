@@ -244,11 +244,6 @@
         "command": "thinkcoffee.orchestrator.selectRun",
         "title": "ThinkCoffee: Select Orchestrator Run",
         "icon": "$(symbol-key)"
-      },
-      {
-        "command": "thinkcoffee.openAdvancedAgents",
-        "title": "ThinkCoffee: Open Advanced AI Agents Panel",
-        "icon": "$(robot)"
       }
     ],
     "menus": {
