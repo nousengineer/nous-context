@@ -2,14 +2,18 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { getDatabase, ChatHistoryService, ChatService } from '@thinkcoffee/core';
+import * as http from 'http';
+import crypto from 'crypto';
+import { getDatabase, ChatHistoryService, ChatService, WebSocketServer } from '@thinkcoffee/core';
 import type { ChatMessage, SaveHistoryInput, HistoryFilter } from '@thinkcoffee/core';
+import { requireAuth, optionalAuth, getAuthContext } from './auth-middleware';
 
 const app = new Hono();
 
 // Middleware
 app.use('*', cors());
 app.use('*', logger());
+app.use('*', optionalAuth);
 
 // Instancias dos servicos (inicializadas apos conexao com DB)
 let chatHistoryService: ChatHistoryService | null = null;
@@ -44,18 +48,25 @@ app.get('/health', (c) => {
 
 /**
  * GET /api/chat/history
- * Lista todos os historicos com filtros opcionais
+ * Lista todos os historicos com filtros opcionais (Requer autenticação)
  */
-app.get('/api/chat/history', async (c) => {
+app.get('/api/chat/history', requireAuth, async (c) => {
   if (!chatHistoryService) {
     return c.json({ error: 'Database not initialized' }, 503);
+  }
+
+  const auth = getAuthContext(c);
+  const workspaceId = c.req.query('workspaceId') || auth.workspaceId;
+
+  if (!workspaceId) {
+    return c.json({ error: 'workspaceId is required' }, 400);
   }
 
   const filter: HistoryFilter = {
     projectId: c.req.query('projectId'),
     pipelineId: c.req.query('pipelineId'),
     channel: c.req.query('channel'),
-    workspace: c.req.query('workspace'),
+    workspace: workspaceId,
     limit: c.req.query('limit') ? parseInt(c.req.query('limit')!, 10) : undefined,
     offset: c.req.query('offset') ? parseInt(c.req.query('offset')!, 10) : undefined,
   };
@@ -130,9 +141,9 @@ app.get('/api/chat/history/pipeline/:pipelineId', async (c) => {
 
 /**
  * POST /api/chat/history
- * Salva ou atualiza historico completo
+ * Salva ou atualiza historico completo (Requer autenticação)
  */
-app.post('/api/chat/history', async (c) => {
+app.post('/api/chat/history', requireAuth, async (c) => {
   if (!chatHistoryService) {
     return c.json({ error: 'Database not initialized' }, 503);
   }
@@ -146,11 +157,12 @@ app.post('/api/chat/history', async (c) => {
     return c.json({ error: 'messages array is required' }, 400);
   }
 
+  const auth = getAuthContext(c);
   const history = await chatHistoryService.saveHistory({
     projectId: body.projectId,
     pipelineId: body.pipelineId,
     channel: body.channel,
-    workspace: body.workspace || '',
+    workspace: auth.workspaceId || body.workspace || '',
     messages: body.messages,
   });
 
@@ -508,8 +520,17 @@ const db = getDatabase();
 const syncApp = createSyncEndpoints({ db });
 app.route('/api/sync', syncApp);
 
-// Inicializar conexao com banco de dados e iniciar servidor
-export async function startServer(port: number = 3000): Promise<void> {
+// ═══════════════════════════════════════════════════════════════════════════════
+// WEBSOCKET SERVER INTEGRATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let webSocketServer: WebSocketServer | null = null;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+/**
+ * Inicializar conexao com banco de dados e iniciar servidor com WebSocket integrado
+ */
+export async function startServer(port: number = 3000): Promise<http.Server> {
   try {
     // Inicializar conexao com banco de dados
     await db.initialize();
@@ -518,15 +539,32 @@ export async function startServer(port: number = 3000): Promise<void> {
     // Inicializar servicos
     chatHistoryService = new ChatHistoryService(db);
 
-    // Iniciar servidor
-    serve({
-      fetch: app.fetch,
-      port,
+    // Criar servidor HTTP
+    const httpServer = http.createServer();
+
+    // Integrar Hono no servidor HTTP
+    httpServer.on('request', app.fetch as any);
+
+    // Integrar WebSocket Server
+    webSocketServer = new WebSocketServer(httpServer, JWT_SECRET);
+    console.log('[server] WebSocket Server initialized and integrated');
+
+    // Iniciar servidor HTTP
+    httpServer.listen(port, () => {
+      console.log(`[server] Server running on port ${port}`);
+      console.log(`[server] WebSocket endpoint: ws://localhost:${port}`);
     });
 
-    console.log(`[server] Server running on port ${port}`);
+    return httpServer;
   } catch (error) {
     console.error('[server] Failed to start server:', error);
     throw error;
   }
+}
+
+/**
+ * Obter instancia do WebSocket Server (para uso em outros serviços)
+ */
+export function getWebSocketServer(): WebSocketServer | null {
+  return webSocketServer;
 }
