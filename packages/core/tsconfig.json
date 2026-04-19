@@ -12,5 +12,18 @@
     "composite": true
   },
   "include": ["src"],
-  "exclude": ["src/**/__tests__/**", "src/**/*.test.ts", "src/**/*.spec.ts", "src/providers/**"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/**/__tests__",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/agents/implementations",
+    "src/agents/tests",
+    "src/services/AITaskService.ts",
+    "src/services/TaskExecutorService.ts",
+    "src/services/WebSocketServer.ts",
+    "src/export/__tests__",
+    "src/providers"
+  ]
 }

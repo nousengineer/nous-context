@@ -30,6 +30,13 @@
           "type": "webview",
           "id": "thinkcoffee.chat",
           "name": "Agents"
+        },
+        {
+          "type": "webview",
+          "id": "thinkcoffee.advancedAgents",
+          "name": "Advanced AI Agents",
+          "icon": "$(robot)",
+          "contextualTitle": "25+ AI Capabilities"
         }
       ]
     },
@@ -170,6 +177,101 @@
         "command": "thinkcoffee.history.refresh",
         "title": "ThinkCoffee: Refresh History",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "thinkcoffee.advancedSoftware.generateCode",
+        "title": "ThinkCoffee: Advanced Code Generation",
+        "icon": "$(code)"
+      },
+      {
+        "command": "thinkcoffee.advancedSoftware.debugCode",
+        "title": "ThinkCoffee: AI-Powered Code Debugging",
+        "icon": "$(debug)"
+      },
+      {
+        "command": "thinkcoffee.advancedSoftware.refactorCode",
+        "title": "ThinkCoffee: Intelligent Code Refactoring",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "thinkcoffee.advancedSecurity.scanVulnerabilities",
+        "title": "ThinkCoffee: Comprehensive Security Scan",
+        "icon": "$(shield-check)"
+      },
+      {
+        "command": "thinkcoffee.advancedSecurity.simulateAttack",
+        "title": "ThinkCoffee: Attack Simulation (Controlled)",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "thinkcoffee.advancedSecurity.zeroDayDiscovery",
+        "title": "ThinkCoffee: Zero-Day Vulnerability Discovery",
+        "icon": "$(search)"
+      },
+      {
+        "command": "thinkcoffee.advancedMultimodal.analyzeImage",
+        "title": "ThinkCoffee: AI Image Analysis",
+        "icon": "$(file-media)"
+      },
+      {
+        "command": "thinkcoffee.advancedMultimodal.analyzeDiagram",
+        "title": "ThinkCoffee: Diagram Interpretation",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "thinkcoffee.advancedMultimodal.synthesizeKnowledge",
+        "title": "ThinkCoffee: Knowledge Synthesis",
+        "icon": "$(book)"
+      },
+      {
+        "command": "thinkcoffee.reasoning.multiStepSolve",
+        "title": "ThinkCoffee: Multi-Step Problem Solving",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "thinkcoffee.reasoning.adaptiveThink",
+        "title": "ThinkCoffee: Adaptive Deep Reasoning",
+        "icon": "$(brain)"
+      },
+      {
+        "command": "thinkcoffee.workflow.createComplex",
+        "title": "ThinkCoffee: Create Complex Workflow",
+        "icon": "$(workflow)"
+      },
+      {
+        "command": "thinkcoffee.workflow.executeAutonomous",
+        "title": "ThinkCoffee: Execute Autonomous Workflow",
+        "icon": "$(play-circle)"
+      },
+      {
+        "command": "thinkcoffee.orchestrator.showRunStatus",
+        "title": "ThinkCoffee: Orchestrator Run Status",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "thinkcoffee.orchestrator.showCheckpoints",
+        "title": "ThinkCoffee: Orchestrator Checkpoints",
+        "icon": "$(list-unordered)"
+      },
+      {
+        "command": "thinkcoffee.orchestrator.pauseRun",
+        "title": "ThinkCoffee: Pause Orchestrator Run",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "thinkcoffee.orchestrator.resumeRun",
+        "title": "ThinkCoffee: Resume Orchestrator Run",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "thinkcoffee.orchestrator.selectRun",
+        "title": "ThinkCoffee: Select Orchestrator Run",
+        "icon": "$(symbol-key)"
+      },
+      {
+        "command": "thinkcoffee.openAdvancedAgents",
+        "title": "ThinkCoffee: Open Advanced AI Agents Panel",
+        "icon": "$(robot)"
       }
     ],
     "menus": {
@@ -211,6 +313,11 @@
           "command": "thinkcoffee.openSafetyNet",
           "when": "view == thinkcoffee.chat",
           "group": "navigation@4"
+        },
+        {
+          "command": "thinkcoffee.openAdvancedAgents",
+          "when": "view == thinkcoffee.chat",
+          "group": "navigation@5"
         },
         {
           "command": "thinkcoffee.showHistory",
@@ -276,6 +383,21 @@
           "minimum": 10,
           "maximum": 1000,
           "description": "Maximum total size in MB for snapshots per pipeline."
+        },
+        "thinkcoffee.orchestrator.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL for ThinkCoffee orchestrator API (example: http://localhost:3000)."
+        },
+        "thinkcoffee.orchestrator.token": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for orchestrator API authentication."
+        },
+        "thinkcoffee.orchestrator.workspaceId": {
+          "type": "string",
+          "default": "",
+          "description": "Workspace ID used by remote orchestrator. If empty, derives from current folder name."
         }
       }
     }

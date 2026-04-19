@@ -49,6 +49,31 @@ export const createApiKeySchema = z.object({
   name: z.string().min(1).max(100),
 });
 
+// Authentication Schemas
+export const signupSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  fullName: z.string().min(2).max(100),
+});
+
+export const loginSchema = z.object({
+  email: z.string().email('Invalid email address'),
+  password: z.string().min(8),
+});
+
+export const createWorkspaceSchema = z.object({
+  name: z.string().min(2).max(100),
+  slug: z.string().min(2).max(50).regex(/^[a-z0-9-]+$/, 'Slug must contain only lowercase letters, numbers, and hyphens'),
+  description: z.string().max(500).optional(),
+});
+
+export const updateWorkspaceSchema = z.object({
+  name: z.string().min(2).max(100).optional(),
+  description: z.string().max(500).optional(),
+  status: z.enum(['active', 'archived', 'deleted']).optional(),
+});
+
+// Type exports
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type CreateContextEntryInput = z.infer<typeof createContextEntrySchema>;
@@ -56,3 +81,7 @@ export type UpdateContextEntryInput = z.infer<typeof updateContextEntrySchema>;
 export type CreateDecisionInput = z.infer<typeof createDecisionSchema>;
 export type UpdateDecisionInput = z.infer<typeof updateDecisionSchema>;
 export type CreateApiKeyInput = z.infer<typeof createApiKeySchema>;
+export type SignupInput = z.infer<typeof signupSchema>;
+export type LoginInput = z.infer<typeof loginSchema>;
+export type CreateWorkspaceInput = z.infer<typeof createWorkspaceSchema>;
+export type UpdateWorkspaceInput = z.infer<typeof updateWorkspaceSchema>;

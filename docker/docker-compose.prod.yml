@@ -1,0 +1,63 @@
+# ==============================================================================
+# ThinkCoffee - Ambiente de Desenvolvimento e Deploy via Docker Compose
+# V3 - Agent Safety Net Habilitado
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  mcp-server:
+    image: thinkcoffee/mcp-server:latest
+    build:
+      context: .
+      args:
+        - THINKCOFFEE_VERSION=local
+    container_name: thinkcoffee-mcp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Puxa configs do variavies de ambiente (.env)
+      - NODE_ENV=production
+      - THINKCOFFEE_DATA_DIR=/data
+      - THINKCOFFEE_DB_PATH=/data/data.sqlite
+      - THINKCOFFEE_SNAPSHOT_DIR=/data/snapshots
+      - THINKCOFFEE_LOG_DIR=/data/logs
+      
+      # V3 Safety Net
+      - THINKCOFFEE_DRY_RUN_DEFAULT=${THINKCOFFEE_DRY_RUN_DEFAULT:-false}
+      - THINKCOFFEE_DIFF_PREVIEW_MODE=${THINKCOFFEE_DIFF_PREVIEW_MODE:-existing-only}
+      - THINKCOFFEE_COMMAND_CONFIRMATION=${THINKCOFFEE_COMMAND_CONFIRMATION:-destructive-only}
+      
+      # Health Check params (Garbage Collection limits)
+      - THINKCOFFEE_SNAPSHOT_RETENTION_DAYS=${THINKCOFFEE_SNAPSHOT_RETENTION_DAYS:-7}
+      - THINKCOFFEE_SNAPSHOT_MAX_SIZE_MB=${THINKCOFFEE_SNAPSHOT_MAX_SIZE_MB:-100}
+
+    # Volume persistente
+    volumes:
+      - thinkcoffee_data:/data
+    profiles:
+      - mcp
+
+  cli:
+    # Service "sob-demanda" (ex: docker compose run cli) via flag --profile cli
+    image: thinkcoffee/cli:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cli
+      args:
+        - THINKCOFFEE_VERSION=local
+    volumes:
+      - thinkcoffee_data:/data
+      # bind pra acessar dev tools na maquina host:
+      - .:/workspace
+    # Interativo pra bash/cli
+    stdin_open: true
+    tty: true
+    profiles:
+      - cli
+
+volumes:
+  thinkcoffee_data:
+    # cria automaticamente "data_local" pra separar do dev.
+    name: thinkcoffee_data_v3

@@ -63,7 +63,7 @@ function inferCostMultiplier(family: string, tier: DiscoveredModel['tier']): Cos
   const tierCostMap: Record<string, CostMultiplier> = {
     premium: 3,
     code: 1,
-    standard: 0.5,
+    standard: 0.33,
     fast: 0,
   };
   return tierCostMap[tier] ?? 0;

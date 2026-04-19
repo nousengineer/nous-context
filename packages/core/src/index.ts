@@ -5,7 +5,7 @@
  */
 
 // ─── Database & Storage ──────────────────────────────────────
-export * from './database';
+export { getDatabase, DataSource } from './database';
 export * from './export';
 
 // ─── Services ────────────────────────────────────────────────
@@ -75,3 +75,90 @@ export {
   type PipelineEvent,
   type PipelineEventType,
 } from './pipeline/contracts';
+
+// ─── API Types ───────────────────────────────────────────────
+export type { ApiResponse, PaginatedResponse, ApiErrorResponse, AuthenticatedRequest } from './types/api';
+
+// ─── Validation Schemas ───────────────────────────────────────
+export {
+  signupSchema,
+  loginSchema,
+  createWorkspaceSchema,
+  updateWorkspaceSchema,
+  createProjectSchema,
+  updateProjectSchema,
+  createContextEntrySchema,
+  updateContextEntrySchema,
+  createDecisionSchema,
+  updateDecisionSchema,
+  createApiKeySchema,
+} from './validation/schemas';
+
+// ─── PHASE 5: Task Executor & WebSocket ─────────────────────
+export {
+  TaskExecutorService,
+  type SandboxConfig,
+  type ExecutionContext,
+  type ExecutionMetrics,
+  type ExecutionResult,
+  type SandboxedCode,
+} from './services/TaskExecutorService';
+
+export {
+  WebSocketServer,
+  type WebSocketMessage,
+  type TaskUpdateMessage,
+  type AgentStatusMessage,
+  type WorkflowProgressMessage,
+  type ClientSubscription,
+} from './services/WebSocketServer';
+
+// ─── PHASE 6: Workflow Execution Engine ──────────────────────
+export {
+  WorkflowExecutionEngine,
+  type WorkflowStep,
+  type WorkflowDefinition,
+  type StepExecution,
+  type WorkflowExecution,
+  type StepResult,
+} from './services/WorkflowExecutionEngine';
+
+// ─── PHASE 7: Advanced Security Analysis ─────────────────────
+export {
+  AdvancedSecurityAnalysisService,
+  type Vulnerability,
+  type AttackVector,
+  type SecurityAnalysisResult,
+  type SecurityRecommendation,
+  type ThreatModel,
+} from './services/AdvancedSecurityAnalysisService';
+
+export {
+  AttackSimulationFramework,
+  type AttackSimulation,
+  type AttackPayload,
+  type SimulationResult,
+  type DetectionEvent,
+  type SimulationMetrics,
+} from './services/AttackSimulationFramework';
+
+// ─── Advanced Features Factory ───────────────────────────────
+export {
+  AdvancedFeaturesFactory,
+  type AdvancedFeaturesConfig,
+} from './services/AdvancedFeaturesFactory';
+
+// ─── Validation Schemas ──────────────────────────────────────
+export type {
+  SignupInput,
+  LoginInput,
+  CreateWorkspaceInput,
+  UpdateWorkspaceInput,
+  CreateProjectInput,
+  UpdateProjectInput,
+  CreateContextEntryInput,
+  UpdateContextEntryInput,
+  CreateDecisionInput,
+  UpdateDecisionInput,
+  CreateApiKeyInput,
+} from './validation/schemas';

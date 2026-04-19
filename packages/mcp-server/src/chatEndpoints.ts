@@ -9,7 +9,7 @@ export function registerChatEndpoints(server: any) {
     'get_chat_history',
     'Retrieve chat history with an optional limit.',
     { limit: z.number().optional().describe('Maximum number of messages to retrieve') },
-    async ({ limit }) => {
+    async ({ limit }: { limit?: number }) => {
       const history = chatService.getHistory(limit);
       return { content: [{ type: 'json', data: history }] };
     }
@@ -58,7 +58,14 @@ export function registerChatEndpoints(server: any) {
       replyTo: z.string().optional().describe('ID of the message being replied to'),
       mentions: z.array(z.string()).optional().describe('Agent roles to mention/trigger'),
     },
-    async ({ content, type, sender, senderLabel, replyTo, mentions }) => {
+    async ({ content, type, sender, senderLabel, replyTo, mentions }: {
+      content: string;
+      type: string;
+      sender: string;
+      senderLabel?: string;
+      replyTo?: string;
+      mentions?: string[];
+    }) => {
       const msg = chatService.send({
         content,
         type,
@@ -110,7 +117,13 @@ export function registerChatEndpoints(server: any) {
       sender: z.string().default('ai').describe('Sender identifier'),
       timeoutMs: z.number().default(60000).describe('Command timeout in milliseconds (default 60s)'),
     },
-    async ({ command, cwd, replyTo, sender, timeoutMs }) => {
+    async ({ command, cwd, replyTo, sender, timeoutMs }: {
+      command: string;
+      cwd?: string;
+      replyTo?: string;
+      sender: string;
+      timeoutMs: number;
+    }) => {
       let output: string;
       let success: boolean;
       try {
