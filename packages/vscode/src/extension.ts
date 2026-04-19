@@ -39,6 +39,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, chatProvider),
   );
 
+  // Load and display pipeline/run history
+  setTimeout(() => {
+    const history = runtime?.getMemory() || [];
+    if (history.length > 0) {
+      const summary = history
+        .slice(0, 5)
+        .map(item => `${item.at}: ${item.summary}`)
+        .join('\n');
+      chatProvider.postStatus(`PM history (last 5): \n${summary}`);
+      out.appendLine(`[pm:memory] Loaded ${history.length} run summaries`);
+    } else {
+      chatProvider.postStatus('PM ready. No previous runs in memory.');
+    }
+  }, 500);
+
   const register = (command: string, handler: (...args: unknown[]) => unknown) => {
     context.subscriptions.push(vscode.commands.registerCommand(command, handler));
   };

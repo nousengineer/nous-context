@@ -22,6 +22,14 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     this.postToWebview({ type: 'chat:error', text });
   }
 
+  postNewChat(title: string, chatId?: string): void {
+    this.postToWebview({ type: 'chat:new-chat', text: title, chatId });
+  }
+
+  postLoadHistory(historyJson: string): void {
+    this.postToWebview({ type: 'chat:load-history', text: historyJson });
+  }
+
   private postToWebview(message: ChatOutboundMessage): void {
     if (!this.view) {
       return;
