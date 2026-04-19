@@ -33,9 +33,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   runtime = new AutonomousRuntime(context);
   const out = runtime.getOutput();
   out.appendLine('[ThinkCoffee] Extension activated');
+  const chatProvider = new ChatSidebarProvider();
 
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, new ChatSidebarProvider()),
+    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, chatProvider),
   );
 
   const register = (command: string, handler: (...args: unknown[]) => unknown) => {
@@ -50,6 +51,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
 
+    chatProvider.postStatus('PM is analyzing request...');
+
     const editorContext = payload.includeActiveEditor ? buildActiveEditorContext() : undefined;
 
     const imageContext = payload.images.length > 0
@@ -62,22 +65,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }).join('\n\n')
       : undefined;
 
-    const summary = await runtime.runLongTask('ThinkCoffee PM chat request', async () => {
-      return runtime!.adaptiveReasoning(
-        [
-          'PM chat request from sidebar composer.',
-          `User prompt: ${payload.prompt || 'none'}`,
-          editorContext ? `Attached active editor context:\n${editorContext}` : 'Attached active editor context: none',
-          imageContext ? `Attached pasted images:\n${imageContext}` : 'Attached pasted images: none',
-          'Decide whether to use single-agent or multi-agent internally and provide concise next action.',
-        ].join('\n'),
-        'standard',
-      );
-    });
-    if (!summary) return;
+    try {
+      const summary = await runtime.runLongTask('ThinkCoffee PM chat request', async () => {
+        return runtime!.adaptiveReasoning(
+          [
+            'PM chat request from sidebar composer.',
+            `User prompt: ${payload.prompt || 'none'}`,
+            editorContext ? `Attached active editor context:\n${editorContext}` : 'Attached active editor context: none',
+            imageContext ? `Attached pasted images:\n${imageContext}` : 'Attached pasted images: none',
+            'Decide whether to use single-agent or multi-agent internally and provide concise next action.',
+          ].join('\n'),
+          'standard',
+        );
+      });
+      if (!summary) {
+        chatProvider.postError('PM request was canceled.');
+        return;
+      }
 
-    out.appendLine(`[pm:chat] ${summary.summary}`);
-    out.show(true);
+      out.appendLine(`[pm:chat] ${summary.summary}`);
+      chatProvider.postAssistant(summary.summary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      out.appendLine(`[pm:chat:error] ${message}`);
+      chatProvider.postError(`PM failed to process request: ${message}`);
+    }
   });
 
   register('thinkcoffee.advancedSoftware.generateCode', async () => {

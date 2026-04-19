@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { discoverModels } from '../ModelRegistry';
 
 /**
  * MultimodalAnalysisService
@@ -20,7 +21,7 @@ export interface MultimodalAnalysisResult {
 }
 
 export class MultimodalAnalysisService {
-  constructor(private aiProvider: any) {}
+  constructor(private aiProvider: any) { }
 
   /**
    * Analyze multimodal content
@@ -30,9 +31,9 @@ export class MultimodalAnalysisService {
     topic: string
   ): Promise<MultimodalAnalysisResult> {
     const files = await this.loadFiles(filePaths);
-    
+
     const result = await this.synthesizeKnowledge(files, topic);
-    
+
     return {
       summary: result.summary,
       details: result.details,
@@ -46,7 +47,7 @@ export class MultimodalAnalysisService {
    */
   private async loadFiles(filePaths: string[]): Promise<Map<string, string>> {
     const files = new Map<string, string>();
-    
+
     for (const filePath of filePaths) {
       try {
         const content = fs.readFileSync(filePath, 'utf-8');
@@ -55,7 +56,7 @@ export class MultimodalAnalysisService {
         files.set(filePath, `[Unable to read file: ${path.basename(filePath)}]`);
       }
     }
-    
+
     return files;
   }
 
@@ -72,6 +73,12 @@ export class MultimodalAnalysisService {
     });
 
     try {
+      // Check available models via registry
+      const discovered = await discoverModels();
+      if (!discovered.length) {
+        return this.defaultSynthesis(topic);
+      }
+
       const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       const model = models[0];
       if (!model) return this.defaultSynthesis(topic);
@@ -99,7 +106,7 @@ Provide:
       for await (const chunk of response.text) {
         text += chunk;
       }
-      
+
       return {
         summary: text.split('\n')[0] || text,
         details: text.split('\n').slice(1, 6),

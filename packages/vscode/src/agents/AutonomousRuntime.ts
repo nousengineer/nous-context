@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { discoverModels } from './ModelRegistry';
 
 export type ReasoningDepth = 'standard' | 'deep';
 
@@ -433,9 +434,20 @@ export class AutonomousRuntime {
 
   private async tryLLM(prompt: string, depth: ReasoningDepth): Promise<string> {
     try {
+      // First, check available models via registry
+      const discovered = await discoverModels();
+      if (!discovered.length) {
+        this.output.appendLine('[tryLLM] No models discovered via ModelRegistry');
+        return '';
+      }
+
+      // Then get the actual VSCode LM models
       const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       const model = models[0];
-      if (!model) return '';
+      if (!model) {
+        this.output.appendLine('[tryLLM] No models available from vscode.lm');
+        return '';
+      }
 
       const messages = [
         vscode.LanguageModelChatMessage.User(
@@ -453,7 +465,9 @@ export class AutonomousRuntime {
         text += chunk;
       }
       return text.trim();
-    } catch {
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`[tryLLM:error] ${msg}`);
       return '';
     }
   }

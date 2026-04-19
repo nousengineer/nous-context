@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { discoverModels } from '../ModelRegistry';
 
 /**
  * CodeGenerationService
@@ -26,7 +27,7 @@ export interface DebugResult {
 export class CodeGenerationService {
   private cache = new Map<string, GeneratedCodeResult>();
 
-  constructor(private aiProvider: any) {}
+  constructor(private aiProvider: any) { }
 
   /**
    * Generate advanced code
@@ -38,7 +39,7 @@ export class CodeGenerationService {
     }
 
     const code = await this.generateViaLLM(prompt, language);
-    
+
     const result: GeneratedCodeResult = {
       code: code || this.fallbackCode(prompt, language),
       explanation: `Generated ${language} implementation with error handling and best practices`,
@@ -68,7 +69,7 @@ Provide:
     `;
 
     const result = await this.generateViaLLM(prompt, 'analysis');
-    
+
     return {
       summary: result || `Debug analysis for: ${issue}`,
       steps: [
@@ -106,7 +107,7 @@ Requirements:
     `;
 
     const refactored = await this.generateViaLLM(prompt, language);
-    
+
     return {
       code: refactored || source,
       explanation: `Refactored using: ${strategy}`,
@@ -119,6 +120,12 @@ Requirements:
    */
   private async generateViaLLM(prompt: string, language: string): Promise<string> {
     try {
+      // Check available models via registry
+      const discovered = await discoverModels();
+      if (!discovered.length) {
+        return '';
+      }
+
       const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       const model = models[0];
       if (!model) return '';

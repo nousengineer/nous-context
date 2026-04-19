@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { discoverModels } from '../ModelRegistry';
 
 /**
  * AdaptiveReasoningService
@@ -28,7 +29,7 @@ export interface ReasoningResult {
 export class AdaptiveReasoningService {
   private cache = new Map<string, ReasoningResult>();
 
-  constructor(private aiProvider: any) {}
+  constructor(private aiProvider: any) { }
 
   /**
    * Perform adaptive reasoning
@@ -64,15 +65,15 @@ export class AdaptiveReasoningService {
   decomposeProblem(problem: string, maxSteps: number = 8): string[] {
     const sentences = problem.split(/[\.\?\!;]/).map(s => s.trim()).filter(Boolean);
     const base = sentences.length > 0 ? sentences : [problem];
-    
+
     const steps: string[] = [];
     for (let i = 0; i < Math.min(base.length, maxSteps - 2); i++) {
       steps.push(`${i + 1}. ${base[i]}`);
     }
-    
+
     steps.push(`${steps.length + 1}. Analyze constraints and dependencies`);
     steps.push(`${steps.length + 1}. Validate solution against requirements`);
-    
+
     return steps.slice(0, maxSteps);
   }
 
@@ -81,6 +82,12 @@ export class AdaptiveReasoningService {
    */
   private async performReasoning(problem: string, depth: string, budget: number): Promise<string> {
     try {
+      // Check available models via registry
+      const discovered = await discoverModels();
+      if (!discovered.length) {
+        return this.defaultReasoning(problem);
+      }
+
       const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
       const model = models[0];
       if (!model) return this.defaultReasoning(problem);
@@ -116,7 +123,7 @@ Provide structured reasoning with:
    */
   private async discoverPatterns(problem: string): Promise<string[]> {
     const patterns: string[] = [];
-    
+
     // Detect common patterns
     if (problem.toLowerCase().includes('performance')) {
       patterns.push('Performance optimization pattern');

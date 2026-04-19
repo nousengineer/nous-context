@@ -1,9 +1,36 @@
 import * as vscode from 'vscode';
 
+interface ChatOutboundMessage {
+  type: 'chat:status' | 'chat:assistant' | 'chat:error';
+  text: string;
+}
+
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'thinkcoffee.chat';
+  private view?: vscode.WebviewView;
+
+  postStatus(text: string): void {
+    this.postToWebview({ type: 'chat:status', text });
+  }
+
+  postAssistant(text: string): void {
+    this.postToWebview({ type: 'chat:assistant', text });
+  }
+
+  postError(text: string): void {
+    this.postToWebview({ type: 'chat:error', text });
+  }
+
+  private postToWebview(message: ChatOutboundMessage): void {
+    if (!this.view) {
+      return;
+    }
+    void this.view.webview.postMessage(message);
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+
     view.webview.options = {
       enableScripts: true,
     };
@@ -34,13 +61,53 @@ body {
 .container {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  height: calc(100vh - 24px);
 }
 h2 {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--vscode-editor-foreground);
+}
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--vscode-editor-background);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.msg {
+  max-width: 92%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg.user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vscode-button-background) 45%, transparent);
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+}
+.msg.error {
+  align-self: flex-start;
+  background: color-mix(in srgb, #b00020 16%, transparent);
+  border: 1px solid color-mix(in srgb, #b00020 30%, transparent);
+}
+.status {
+  font-size: 11px;
+  opacity: 0.8;
+  padding-left: 2px;
 }
 .composer {
   border: 1px solid var(--vscode-focusBorder);
@@ -126,7 +193,9 @@ h2 {
 </head>
 <body>
 <div class="container">
-<h2>ThinkCoffee</h2>
+<h2>ThinkCoffee Chat</h2>
+<div id="messages" class="messages"></div>
+<div id="status" class="status">PM ready.</div>
 <div class="composer">
   <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build"></textarea>
   <div id="chips" class="chips"></div>
@@ -134,7 +203,7 @@ h2 {
     <button id="attachEditorBtn" class="tool-btn" type="button">+ File</button>
     <button id="clearImagesBtn" class="tool-btn" type="button">Image</button>
     <div class="mode">Auto</div>
-    <button id="sendBtn" class="send-btn" type="button" title="Send">↑</button>
+    <button id="sendBtn" class="send-btn" type="button" title="Send">^</button>
   </div>
 </div>
 <div class="hint">
@@ -148,6 +217,8 @@ const send = document.getElementById('sendBtn');
 const attachEditorBtn = document.getElementById('attachEditorBtn');
 const clearImagesBtn = document.getElementById('clearImagesBtn');
 const chips = document.getElementById('chips');
+const messagesEl = document.getElementById('messages');
+const statusEl = document.getElementById('status');
 
 let includeActiveEditor = false;
 let images = [];
@@ -178,11 +249,40 @@ function setImages(next) {
   renderChips();
 }
 
+function addMessage(role, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + role;
+  el.textContent = text;
+  messagesEl.appendChild(el);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function setStatus(text) {
+  statusEl.textContent = text;
+}
+
+function buildUserPreview(prompt, includeFile, imageCount) {
+  const lines = [];
+  if (prompt) {
+    lines.push(prompt);
+  }
+  if (includeFile || imageCount > 0) {
+    const flags = [];
+    if (includeFile) flags.push('active editor file');
+    if (imageCount > 0) flags.push(imageCount + ' image' + (imageCount > 1 ? 's' : ''));
+    lines.push('Attachments: ' + flags.join(', '));
+  }
+  return lines.join('\n');
+}
+
 function submitPrompt() {
   const prompt = (input.value || '').trim();
   if (!prompt && !includeActiveEditor && images.length === 0) {
     return;
   }
+
+  addMessage('user', buildUserPreview(prompt, includeActiveEditor, images.length));
+  setStatus('PM thinking...');
 
   vscode.postMessage({
     type: 'ask',
@@ -247,6 +347,29 @@ input.addEventListener('paste', event => {
 
   if (foundImage) {
     event.preventDefault();
+  }
+});
+
+window.addEventListener('message', event => {
+  const message = event.data;
+  if (!message || typeof message !== 'object') {
+    return;
+  }
+
+  if (message.type === 'chat:status' && typeof message.text === 'string') {
+    setStatus(message.text);
+    return;
+  }
+
+  if (message.type === 'chat:assistant' && typeof message.text === 'string') {
+    addMessage('assistant', message.text);
+    setStatus('PM ready.');
+    return;
+  }
+
+  if (message.type === 'chat:error' && typeof message.text === 'string') {
+    addMessage('error', message.text);
+    setStatus('PM ready.');
   }
 });
 
