@@ -9,6 +9,7 @@ interface ChatOutboundMessage {
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'thinkcoffee.chat';
   private view?: vscode.WebviewView;
+  private pendingMessages: ChatOutboundMessage[] = [];
 
   postStatus(text: string): void {
     this.postToWebview({ type: 'chat:status', text });
@@ -32,698 +33,658 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 
   private postToWebview(message: ChatOutboundMessage): void {
     if (!this.view) {
+      this.pendingMessages.push(message);
       return;
     }
     void this.view.webview.postMessage(message);
   }
 
-  resolveWebviewView(view: vscode.WebviewView): void {
-    console.log('[extension] resolveWebviewView called for view:', view.viewType);
-    this.view = view;
-    console.log('[extension] Webview view set, view exists:', !!this.view);
+  private flushPending(): void {
+    for (const msg of this.pendingMessages) {
+      if (this.view) {
+        void this.view.webview.postMessage(msg);
+      }
+    }
+    this.pendingMessages = [];
+  }
 
-    view.webview.options = {
-      enableScripts: true,
-    };
-    console.log('[extension] Webview options set');
+  resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view;
+
+    view.webview.options = { enableScripts: true };
 
     view.webview.onDidReceiveMessage(async message => {
-      console.log('[extension] Received message from webview:', message);
-      if (message?.type !== 'ask') {
-        console.log('[extension] Ignoring non-ask message');
+      if (message?.type === 'ready') {
+        this.flushPending();
         return;
       }
-      console.log('[extension] Processing ask message');
+      if (message?.type !== 'ask') {
+        return;
+      }
       await vscode.commands.executeCommand('thinkcoffee.chat.ask', message);
     });
-    console.log('[extension] Message handler set');
 
     const nonce = getNonce();
 
-    console.log('[extension] Generating HTML for webview');
-    const html = `<!DOCTYPE html>
+    view.webview.html = `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ThinkCoffee Chat</title>
+<meta charset="UTF-8"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <style>
-* {
-  box-sizing: border-box;
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--vscode-font-family);
+  font-size:var(--vscode-font-size);
+  color:var(--vscode-foreground);
+  background:var(--vscode-sideBar-background);
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
 }
-body {
-  font-family: var(--vscode-font-family);
-  color: var(--vscode-editor-foreground);
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  overflow: hidden;
+
+/* ── SESSIONS HEADER ── */
+.sessions-header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:8px 12px 6px;
+  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;
+  color:var(--vscode-sideBarSectionHeader-foreground,var(--vscode-foreground));
+  border-bottom:1px solid var(--vscode-sideBarSectionHeader-border,transparent);
+  flex-shrink:0;
 }
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: 0;
+.sessions-actions{display:flex;gap:2px}
+.icon-btn{
+  background:transparent;border:0;color:var(--vscode-icon-foreground,var(--vscode-foreground));
+  width:22px;height:22px;border-radius:4px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:14px;
 }
-.history-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  padding: 8px;
-  border-bottom: 1px solid var(--vscode-input-border);
-  overflow-y: auto;
-  max-height: 30%;
-  flex-shrink: 0;
+.icon-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
+
+/* ── SESSION LIST ── */
+.session-list{
+  flex:1;overflow-y:auto;padding:2px 0;
+  min-height:0;
 }
-.history-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--vscode-input-border) 50%, transparent);
+.session-item{
+  display:flex;align-items:flex-start;gap:8px;
+  padding:6px 12px;cursor:pointer;
+  border-left:2px solid transparent;
 }
-.history-header h3 {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+.session-item:hover{background:var(--vscode-list-hoverBackground)}
+.session-item.active{
+  background:var(--vscode-list-activeSelectionBackground);
+  color:var(--vscode-list-activeSelectionForeground);
+  border-left-color:var(--vscode-focusBorder);
 }
-.new-chat-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: 0;
-  border-radius: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  white-space: nowrap;
+.session-dot{
+  width:6px;height:6px;border-radius:50%;
+  margin-top:5px;flex-shrink:0;
+  background:var(--vscode-charts-blue,#3794ff);
 }
-.new-chat-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+.session-dot.idle{background:var(--vscode-foreground);opacity:.3}
+.session-info{flex:1;min-width:0}
+.session-title{
+  font-size:12px;line-height:1.4;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.chat-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  overflow-y: auto;
+.session-meta{
+  font-size:11px;opacity:.6;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
-.chat-item {
-  padding: 6px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--vscode-input-foreground);
-  transition: all 0.15s ease;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+.session-delete{
+  background:transparent;border:0;color:var(--vscode-foreground);
+  opacity:0;cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;
+  flex-shrink:0;
 }
-.chat-item:hover {
-  background: var(--vscode-list-hoverBackground);
+.session-item:hover .session-delete{opacity:.5}
+.session-delete:hover{opacity:1!important;background:var(--vscode-toolbar-hoverBackground)}
+
+.more-link{
+  padding:4px 12px 8px;font-size:11px;
+  color:var(--vscode-textLink-foreground);cursor:pointer;
+  display:flex;justify-content:space-between;
 }
-.chat-item.active {
-  background: color-mix(in srgb, var(--vscode-button-background) 25%, transparent);
-  border-color: var(--vscode-focusBorder);
-  font-weight: 500;
+.more-link:hover{text-decoration:underline}
+
+/* ── MESSAGES AREA ── */
+.chat-area{
+  flex:1;overflow-y:auto;padding:12px;
+  display:flex;flex-direction:column;gap:12px;
+  min-height:0;
 }
-.chat-item-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.chat-area.empty-state{
+  justify-content:center;align-items:center;
+  color:var(--vscode-descriptionForeground);font-size:12px;
 }
-.chat-item-delete {
-  background: transparent;
-  border: 0;
-  color: var(--vscode-errorForeground);
-  cursor: pointer;
-  font-size: 10px;
-  padding: 0 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
+.msg{
+  font-size:12px;line-height:1.5;
+  white-space:pre-wrap;word-break:break-word;
 }
-.chat-item:hover .chat-item-delete {
-  opacity: 1;
+.msg-row{display:flex;gap:8px;align-items:flex-start}
+.msg-avatar{
+  width:20px;height:20px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;
+  margin-top:2px;
 }
-.chat-item-delete:hover {
-  opacity: 1 !important;
+.msg-avatar.user-av{
+  background:var(--vscode-charts-blue,#3794ff);color:#fff;
 }
-.chat-section {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  flex: 1;
-  overflow: hidden;
+.msg-avatar.pm-av{
+  background:var(--vscode-charts-orange,#d18616);color:#fff;
 }
-.messages {
-  flex: 1;
-  overflow-y: auto;
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 10px;
-  padding: 10px;
-  background: var(--vscode-editor-background);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.msg-content{flex:1;min-width:0}
+.msg-role{font-size:11px;font-weight:600;margin-bottom:2px}
+.msg-text{font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.msg-error .msg-text{color:var(--vscode-errorForeground)}
+.status-bar{
+  font-size:11px;padding:4px 12px;
+  color:var(--vscode-descriptionForeground);
+  flex-shrink:0;
+  display:flex;align-items:center;gap:6px;
 }
-.messages.empty {
-  justify-content: center;
-  align-items: center;
-  color: var(--vscode-input-placeholder-foreground);
-  font-size: 12px;
+.status-bar .spinner{
+  width:12px;height:12px;border:2px solid var(--vscode-foreground);
+  border-top-color:transparent;border-radius:50%;
+  animation:spin .8s linear infinite;display:none;
 }
-.msg {
-  max-width: 92%;
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
+.status-bar.busy .spinner{display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── COMPOSER (bottom) ── */
+.composer{
+  border-top:1px solid var(--vscode-panel-border,var(--vscode-sideBarSectionHeader-border,#333));
+  padding:8px 10px 6px;
+  flex-shrink:0;
+  display:flex;flex-direction:column;gap:6px;
+  background:var(--vscode-sideBar-background);
 }
-.msg.user {
-  align-self: flex-end;
-  background: color-mix(in srgb, var(--vscode-button-background) 22%, transparent);
-  border: 1px solid color-mix(in srgb, var(--vscode-button-background) 45%, transparent);
+.composer-input{
+  border:1px solid var(--vscode-input-border);
+  border-radius:8px;
+  background:var(--vscode-input-background);
+  padding:8px 10px;
+  display:flex;flex-direction:column;gap:4px;
 }
-.msg.assistant {
-  align-self: flex-start;
-  background: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
+.composer-input:focus-within{
+  border-color:var(--vscode-focusBorder);
 }
-.msg.error {
-  align-self: flex-start;
-  background: color-mix(in srgb, #b00020 16%, transparent);
-  border: 1px solid color-mix(in srgb, #b00020 30%, transparent);
+.prompt{
+  width:100%;min-height:36px;max-height:120px;resize:none;
+  background:transparent;color:var(--vscode-input-foreground);
+  border:0;outline:none;
+  font-size:13px;line-height:1.4;font-family:var(--vscode-font-family);
 }
-.status {
-  font-size: 11px;
-  opacity: 0.8;
-  padding-left: 2px;
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{
+  font-size:10px;padding:2px 6px;
+  border-radius:3px;
+  background:var(--vscode-badge-background);
+  color:var(--vscode-badge-foreground);
+  display:flex;align-items:center;gap:4px;
 }
-.composer {
-  border: 1px solid var(--vscode-focusBorder);
-  border-radius: 12px;
-  background: var(--vscode-editor-background);
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex-shrink: 0;
+.chip-remove{cursor:pointer;opacity:.7;font-size:12px}
+.chip-remove:hover{opacity:1}
+.composer-toolbar{
+  display:flex;align-items:center;gap:2px;
 }
-.prompt {
-  width: 100%;
-  min-height: 56px;
-  max-height: 120px;
-  resize: vertical;
-  box-sizing: border-box;
-  background: transparent;
-  color: var(--vscode-input-foreground);
-  border: 0;
-  outline: none;
-  font-size: 13px;
-  line-height: 1.4;
-  font-family: var(--vscode-font-family);
+.tb-btn{
+  background:transparent;border:0;
+  color:var(--vscode-icon-foreground,var(--vscode-foreground));
+  width:24px;height:24px;border-radius:4px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;
 }
-.toolbar {
-  display: grid;
-  grid-template-columns: auto auto 1fr auto;
-  gap: 6px;
-  align-items: center;
+.tb-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
+.tb-btn.active{color:var(--vscode-focusBorder)}
+.tb-spacer{flex:1}
+.tb-label{
+  font-size:11px;color:var(--vscode-descriptionForeground);
+  padding:0 4px;cursor:default;
+  display:flex;align-items:center;gap:2px;
 }
-.tool-btn {
-  border: 1px solid var(--vscode-input-border);
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border-radius: 7px;
-  padding: 5px 8px;
-  cursor: pointer;
-  font-size: 13px;
+.send-btn{
+  background:var(--vscode-button-background);color:var(--vscode-button-foreground);
+  border:0;border-radius:4px;width:24px;height:24px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:14px;
 }
-.tool-btn:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-.tool-btn.active {
-  border-color: var(--vscode-focusBorder);
-}
-.mode {
-  font-size: 12px;
-  opacity: 0.85;
-  padding-left: 2px;
-}
-.send-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border: 0;
-  border-radius: 999px;
-  width: 28px;
-  height: 28px;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-.send-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.chip {
-  font-size: 11px;
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 999px;
-  padding: 3px 8px;
-  background: var(--vscode-input-background);
-}
-.hint {
-  font-size: 11px;
-  opacity: 0.75;
-  line-height: 1.4;
-}
+.send-btn:hover{background:var(--vscode-button-hoverBackground)}
+.send-btn:disabled{opacity:.4;cursor:default}
 </style>
 </head>
 <body>
-<div class="sidebar">
-  <!-- History Section -->
-  <div class="history-section">
-    <div class="history-header">
-      <h3>History</h3>
-      <button id="newChatBtn" class="new-chat-btn" type="button">New</button>
-    </div>
-    <ul id="chatList" class="chat-list"></ul>
-  </div>
 
-  <!-- Chat Section -->
-  <div class="chat-section">
-    <div id="messages" class="messages empty">
-      <span>Start a new conversation</span>
+<!-- SESSIONS VIEW -->
+<div id="sessionsView" style="display:flex;flex-direction:column;height:100%">
+  <div class="sessions-header">
+    <span>Sessions</span>
+    <div class="sessions-actions">
+      <button class="icon-btn" id="newChatBtn" title="New Chat">+</button>
     </div>
-    <div id="status" class="status">PM ready.</div>
-    <div class="composer">
-      <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build"></textarea>
+  </div>
+  <div class="session-list" id="sessionList"></div>
+</div>
+
+<!-- CHAT VIEW -->
+<div id="chatView" style="display:none;flex-direction:column;height:100%">
+  <div class="sessions-header">
+    <button class="icon-btn" id="backBtn" title="Back to sessions">\u2190</button>
+    <span id="chatTitle" style="flex:1;text-align:center;text-transform:none;font-weight:500;font-size:12px"></span>
+    <button class="icon-btn" id="newChatBtn2" title="New Chat">+</button>
+  </div>
+  <div class="chat-area empty-state" id="messages">
+    <span>Start a new conversation</span>
+  </div>
+  <div class="status-bar" id="statusBar">
+    <span class="spinner"></span>
+    <span id="statusText">Ready</span>
+  </div>
+  <div class="composer">
+    <div class="composer-input">
+      <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build" rows="1"></textarea>
       <div id="chips" class="chips"></div>
-      <div class="toolbar">
-        <button id="attachEditorBtn" class="tool-btn" type="button">+ File</button>
-        <button id="clearImagesBtn" class="tool-btn" type="button">Image</button>
-        <div class="mode">Auto</div>
-        <button id="sendBtn" class="send-btn" type="button" title="Send">^</button>
-      </div>
     </div>
-    <div class="hint">
-      PM executes commands automatically. Paste image in the composer or toggle + File to include the active editor file.
+    <div class="composer-toolbar">
+      <button class="tb-btn" id="attachBtn" title="Attach active editor">+</button>
+      <button class="tb-btn" id="imageBtn" title="Attach image">\u{1F4CE}</button>
+      <span class="tb-label">ThinkCoffee PM</span>
+      <span class="tb-spacer"></span>
+      <button class="send-btn" id="sendBtn" title="Send" disabled>\u2191</button>
     </div>
   </div>
 </div>
 
 <script nonce="${nonce}">
-const vscode = acquireVsCodeApi();
-const input = document.getElementById('chatPrompt');
-const send = document.getElementById('sendBtn');
-const attachEditorBtn = document.getElementById('attachEditorBtn');
-const clearImagesBtn = document.getElementById('clearImagesBtn');
-const chips = document.getElementById('chips');
-const messagesEl = document.getElementById('messages');
-const statusEl = document.getElementById('status');
-const chatListEl = document.getElementById('chatList');
-const newChatBtn = document.getElementById('newChatBtn');
+(function(){
+  const vscode = acquireVsCodeApi();
 
-// Debug: verify elements exist
-console.log('[init] Elements loaded:', {
-  input: !!input,
-  send: !!send,
-  attachEditorBtn: !!attachEditorBtn,
-  clearImagesBtn: !!clearImagesBtn,
-  chips: !!chips,
-  messagesEl: !!messagesEl,
-  statusEl: !!statusEl,
-  chatListEl: !!chatListEl,
-  newChatBtn: !!newChatBtn,
-});
+  // ── State ──
+  let state = vscode.getState() || { chats: {}, currentChatId: null };
+  let includeActiveEditor = false;
+  let images = [];
 
-let includeActiveEditor = false;
-let images = [];
-let chats = {};
-let currentChatId = null;
+  function persist() { vscode.setState(state); }
 
-// Initialize chats from localStorage
-function initializeChats() {
-  const stored = localStorage.getItem('thinkcoffee:chats');
-  chats = stored ? JSON.parse(stored) : {};
-  
-  const storedCurrentId = localStorage.getItem('thinkcoffee:currentChatId');
-  if (storedCurrentId && chats[storedCurrentId]) {
-    currentChatId = storedCurrentId;
-  }
-  
-  if (!currentChatId) {
-    createNewChat();
-  }
-  
-  renderChatList();
-  loadCurrentChat();
-}
+  // ── DOM refs ──
+  const sessionsView = document.getElementById('sessionsView');
+  const chatView = document.getElementById('chatView');
+  const sessionList = document.getElementById('sessionList');
+  const messagesEl = document.getElementById('messages');
+  const statusText = document.getElementById('statusText');
+  const statusBar = document.getElementById('statusBar');
+  const chatTitle = document.getElementById('chatTitle');
+  const input = document.getElementById('chatPrompt');
+  const sendBtn = document.getElementById('sendBtn');
+  const chipsEl = document.getElementById('chips');
 
-function saveChats() {
-  localStorage.setItem('thinkcoffee:chats', JSON.stringify(chats));
-  localStorage.setItem('thinkcoffee:currentChatId', currentChatId || '');
-}
+  // ── Helpers ──
+  function genId() { return 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
 
-function generateChatId() {
-  return 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-}
-
-function createNewChat() {
-  const chatId = generateChatId();
-  const title = new Date().toLocaleString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    hour: '2-digit', 
-    minute: '2-digit' 
-  });
-  
-  chats[chatId] = {
-    id: chatId,
-    title: title,
-    messages: [],
-    createdAt: Date.now(),
-  };
-  
-  currentChatId = chatId;
-  saveChats();
-  renderChatList();
-  loadCurrentChat();
-}
-
-function deleteChat(chatId) {
-  if (Object.keys(chats).length <= 1) {
-    alert('Cannot delete the last chat');
-    return;
-  }
-  
-  delete chats[chatId];
-  
-  if (currentChatId === chatId) {
-    const remaining = Object.keys(chats)[0];
-    currentChatId = remaining;
-  }
-  
-  saveChats();
-  renderChatList();
-  loadCurrentChat();
-}
-
-function loadCurrentChat() {
-  if (!currentChatId || !chats[currentChatId]) {
-    return;
-  }
-  
-  const chat = chats[currentChatId];
-  messagesEl.innerHTML = '';
-  
-  if (chat.messages.length === 0) {
-    messagesEl.className = 'messages empty';
-    messagesEl.innerHTML = '<span>Start a new conversation</span>';
-  } else {
-    messagesEl.className = 'messages';
-    for (const msg of chat.messages) {
-      const el = document.createElement('div');
-      el.className = 'msg ' + msg.role;
-      el.textContent = msg.text;
-      messagesEl.appendChild(el);
-    }
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-}
-
-function renderChatList() {
-  chatListEl.innerHTML = '';
-  
-  const sortedChats = Object.values(chats).sort((a, b) => b.createdAt - a.createdAt);
-  
-  for (const chat of sortedChats) {
-    const li = document.createElement('li');
-    li.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
-    
-    const nameSpan = document.createElement('span');
-    nameSpan.className = 'chat-item-name';
-    nameSpan.textContent = chat.title;
-    nameSpan.addEventListener('click', () => {
-      currentChatId = chat.id;
-      saveChats();
-      renderChatList();
-      loadCurrentChat();
-    });
-    
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'chat-item-delete';
-    deleteBtn.textContent = '×';
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteChat(chat.id);
-    });
-    
-    li.appendChild(nameSpan);
-    li.appendChild(deleteBtn);
-    chatListEl.appendChild(li);
-  }
-}
-
-function addMessageToCurrentChat(role, text) {
-  if (!currentChatId || !chats[currentChatId]) {
-    return;
-  }
-  
-  chats[currentChatId].messages.push({ role, text });
-  saveChats();
-  loadCurrentChat();
-}
-
-function escapeHtml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderChips() {
-  const parts = [];
-  if (includeActiveEditor) {
-    parts.push('<span class="chip">Active editor file</span>');
-  }
-  for (const img of images) {
-    parts.push('<span class="chip">Image: ' + escapeHtml(img.name || 'clipboard') + '</span>');
-  }
-  chips.innerHTML = parts.join('');
-  attachEditorBtn.classList.toggle('active', includeActiveEditor);
-}
-
-function setImages(next) {
-  images = next.slice(0, 5);
-  renderChips();
-}
-
-function setStatus(text) {
-  statusEl.textContent = text;
-}
-
-function buildUserPreview(prompt, includeFile, imageCount) {
-  const lines = [];
-  if (prompt) {
-    lines.push(prompt);
-  }
-  if (includeFile || imageCount > 0) {
-    const flags = [];
-    if (includeFile) flags.push('active editor file');
-    if (imageCount > 0) flags.push(imageCount + ' image' + (imageCount > 1 ? 's' : ''));
-    lines.push('Attachments: ' + flags.join(', '));
-  }
-  return lines.join('\n');
-}
-
-function submitPrompt() {
-  console.log('[submitPrompt] Called');
-  const prompt = (input?.value || '').trim();
-  console.log('[submitPrompt] Prompt:', prompt, 'includeEditor:', includeActiveEditor, 'images:', images.length);
-  
-  if (!prompt && !includeActiveEditor && images.length === 0) {
-    console.log('[submitPrompt] Empty, skipping');
-    return;
+  function timeAgo(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + ' min ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    return Math.floor(hrs / 24) + 'd ago';
   }
 
-  const userPreview = buildUserPreview(prompt, includeActiveEditor, images.length);
-  addMessageToCurrentChat('user', userPreview);
-  setStatus('PM thinking...');
-
-  console.log('[submitPrompt] Sending message via vscode.postMessage');
-  vscode.postMessage({
-    type: 'ask',
-    prompt,
-    includeActiveEditor,
-    images,
-  });
-
-  input.value = '';
-  setImages([]);
-  input.focus();
-}
-
-newChatBtn.addEventListener('click', () => {
-  console.log('[ui] New chat button clicked');
-  createNewChat();
-});
-
-send.addEventListener('click', (e) => {
-  console.log('[ui] Send button clicked', e);
-  submitPrompt();
-});
-
-attachEditorBtn.addEventListener('click', () => {
-  console.log('[ui] Attach editor button clicked');
-  includeActiveEditor = !includeActiveEditor;
-  renderChips();
-});
-
-clearImagesBtn.addEventListener('click', () => {
-  console.log('[ui] Clear images button clicked');
-  setImages([]);
-});
-
-input.addEventListener('keydown', event => {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    console.log('[ui] Enter key pressed in input');
-    event.preventDefault();
-    submitPrompt();
-  }
-});
-
-input.addEventListener('paste', event => {
-  const clipboard = event.clipboardData;
-  if (!clipboard || !clipboard.items) {
-    return;
+  function escapeHtml(t) {
+    return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  let foundImage = false;
-  for (const item of clipboard.items) {
-    if (item.kind !== 'file' || !item.type.startsWith('image/')) {
-      continue;
+  // ── Sessions View ──
+  function showSessions() {
+    sessionsView.style.display = 'flex';
+    chatView.style.display = 'none';
+    renderSessionList();
+  }
+
+  function showChat(chatId) {
+    if (!state.chats[chatId]) return;
+    state.currentChatId = chatId;
+    persist();
+    sessionsView.style.display = 'none';
+    chatView.style.display = 'flex';
+    renderChat();
+  }
+
+  function renderSessionList() {
+    sessionList.innerHTML = '';
+    const sorted = Object.values(state.chats).sort((a,b) => b.createdAt - a.createdAt);
+    const visible = sorted.slice(0, 5);
+    const remaining = sorted.length - visible.length;
+
+    for (const chat of visible) {
+      const hasMessages = chat.messages && chat.messages.length > 0;
+      const lastMsg = hasMessages ? chat.messages[chat.messages.length - 1] : null;
+      const item = document.createElement('div');
+      item.className = 'session-item' + (chat.id === state.currentChatId ? ' active' : '');
+
+      const dot = document.createElement('div');
+      dot.className = 'session-dot' + (hasMessages ? '' : ' idle');
+
+      const info = document.createElement('div');
+      info.className = 'session-info';
+
+      const title = document.createElement('div');
+      title.className = 'session-title';
+      title.textContent = chat.title || 'New Chat';
+
+      const meta = document.createElement('div');
+      meta.className = 'session-meta';
+      meta.textContent = lastMsg ? lastMsg.text.slice(0,50) : timeAgo(chat.createdAt);
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const del = document.createElement('button');
+      del.className = 'session-delete';
+      del.textContent = '\u00d7';
+      del.title = 'Delete';
+      del.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
+
+      item.appendChild(dot);
+      item.appendChild(info);
+      item.appendChild(del);
+      item.addEventListener('click', () => showChat(chat.id));
+      sessionList.appendChild(item);
     }
 
-    const file = item.getAsFile();
-    if (!file) {
-      continue;
+    if (remaining > 0) {
+      const more = document.createElement('div');
+      more.className = 'more-link';
+      more.innerHTML = '<span>MORE</span><span>' + remaining + '</span>';
+      more.addEventListener('click', () => {
+        // Show all sessions
+        renderAllSessions();
+      });
+      sessionList.appendChild(more);
     }
+  }
 
-    foundImage = true;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-      if (!dataUrl) {
-        return;
+  function renderAllSessions() {
+    sessionList.innerHTML = '';
+    const sorted = Object.values(state.chats).sort((a,b) => b.createdAt - a.createdAt);
+    for (const chat of sorted) {
+      const hasMessages = chat.messages && chat.messages.length > 0;
+      const lastMsg = hasMessages ? chat.messages[chat.messages.length - 1] : null;
+      const item = document.createElement('div');
+      item.className = 'session-item' + (chat.id === state.currentChatId ? ' active' : '');
+
+      const dot = document.createElement('div');
+      dot.className = 'session-dot' + (hasMessages ? '' : ' idle');
+
+      const info = document.createElement('div');
+      info.className = 'session-info';
+
+      const title = document.createElement('div');
+      title.className = 'session-title';
+      title.textContent = chat.title || 'New Chat';
+
+      const meta = document.createElement('div');
+      meta.className = 'session-meta';
+      meta.textContent = lastMsg ? lastMsg.text.slice(0,50) : timeAgo(chat.createdAt);
+
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      const del = document.createElement('button');
+      del.className = 'session-delete';
+      del.textContent = '\u00d7';
+      del.title = 'Delete';
+      del.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
+
+      item.appendChild(dot);
+      item.appendChild(info);
+      item.appendChild(del);
+      item.addEventListener('click', () => showChat(chat.id));
+      sessionList.appendChild(item);
+    }
+  }
+
+  // ── Chat View ──
+  function renderChat() {
+    const chat = state.chats[state.currentChatId];
+    if (!chat) return;
+
+    chatTitle.textContent = chat.title || 'New Chat';
+    messagesEl.innerHTML = '';
+
+    if (!chat.messages || chat.messages.length === 0) {
+      messagesEl.className = 'chat-area empty-state';
+      messagesEl.innerHTML = '<span>Start a new conversation</span>';
+    } else {
+      messagesEl.className = 'chat-area';
+      for (const m of chat.messages) {
+        appendMsgDom(m.role, m.text);
       }
-      setImages(images.concat([{
-        name: file.name || 'pasted-image',
-        mimeType: file.type || 'image/png',
-        dataUrl,
-      }]));
-    };
-    reader.readAsDataURL(file);
-  }
-
-  if (foundImage) {
-    event.preventDefault();
-  }
-});
-
-window.addEventListener('message', event => {
-  const message = event.data;
-  if (!message || typeof message !== 'object') {
-    return;
-  }
-
-  console.log('[message] Received from extension:', message.type);
-
-  if (message.type === 'chat:status' && typeof message.text === 'string') {
-    console.log('[message] Status:', message.text);
-    setStatus(message.text);
-    return;
-  }
-
-  if (message.type === 'chat:assistant' && typeof message.text === 'string') {
-    console.log('[message] Assistant response received');
-    addMessageToCurrentChat('assistant', message.text);
-    setStatus('PM ready.');
-    return;
-  }
-
-  if (message.type === 'chat:error' && typeof message.text === 'string') {
-    console.log('[message] Error:', message.text);
-    addMessageToCurrentChat('error', message.text);
-    setStatus('PM ready.');
-    return;
-  }
-
-  if (message.type === 'chat:new-chat' && typeof message.text === 'string') {
-    console.log('[message] New chat:', message.text, 'id:', message.chatId);
-    const chatId = message.chatId || generateChatId();
-    chats[chatId] = {
-      id: chatId,
-      title: message.text,
-      messages: [],
-      createdAt: Date.now(),
-    };
-    currentChatId = chatId;
-    saveChats();
-    renderChatList();
-    loadCurrentChat();
-    return;
-  }
-
-  if (message.type === 'chat:load-history' && typeof message.text === 'string') {
-    console.log('[message] Load history');
-    try {
-      const history = JSON.parse(message.text);
-      chats = history.chats || {};
-      currentChatId = history.currentChatId;
-      renderChatList();
-      loadCurrentChat();
-    } catch (e) {
-      console.error('[message] Failed to parse history:', e);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
-    return;
   }
-});
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', () => {
-  console.log('[webview] DOMContentLoaded, initializing chat');
-  initializeChats();
-  renderChips();
-  console.log('[webview] Chat initialized');
-});
+  function appendMsgDom(role, text) {
+    const row = document.createElement('div');
+    row.className = 'msg-row' + (role === 'error' ? ' msg-error' : '');
+
+    const av = document.createElement('div');
+    av.className = 'msg-avatar ' + (role === 'user' ? 'user-av' : 'pm-av');
+    av.textContent = role === 'user' ? 'U' : role === 'error' ? '!' : 'PM';
+
+    const content = document.createElement('div');
+    content.className = 'msg-content';
+
+    const roleEl = document.createElement('div');
+    roleEl.className = 'msg-role';
+    roleEl.textContent = role === 'user' ? 'You' : role === 'error' ? 'Error' : 'ThinkCoffee PM';
+
+    const textEl = document.createElement('div');
+    textEl.className = 'msg-text';
+    textEl.textContent = text;
+
+    content.appendChild(roleEl);
+    content.appendChild(textEl);
+    row.appendChild(av);
+    row.appendChild(content);
+    messagesEl.appendChild(row);
+  }
+
+  // ── Chat CRUD ──
+  function createNewChat() {
+    const id = genId();
+    const title = new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    state.chats[id] = { id, title, messages: [], createdAt: Date.now() };
+    state.currentChatId = id;
+    persist();
+    showChat(id);
+  }
+
+  function deleteChat(chatId) {
+    delete state.chats[chatId];
+    if (state.currentChatId === chatId) {
+      const keys = Object.keys(state.chats);
+      state.currentChatId = keys.length > 0 ? keys[0] : null;
+    }
+    persist();
+    if (chatView.style.display !== 'none' && (!state.currentChatId || !state.chats[state.currentChatId])) {
+      showSessions();
+    } else if (chatView.style.display !== 'none') {
+      renderChat();
+    }
+    renderSessionList();
+  }
+
+  function addMessage(role, text) {
+    const chat = state.chats[state.currentChatId];
+    if (!chat) return;
+    chat.messages.push({ role, text });
+    // Update title from first user message
+    if (role === 'user' && chat.messages.filter(m => m.role === 'user').length === 1) {
+      chat.title = text.slice(0, 60) || chat.title;
+    }
+    persist();
+    if (chatView.style.display !== 'none') {
+      if (messagesEl.classList.contains('empty-state')) {
+        messagesEl.className = 'chat-area';
+        messagesEl.innerHTML = '';
+      }
+      appendMsgDom(role, text);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+  }
+
+  // ── Status ──
+  function setStatus(text, busy) {
+    statusText.textContent = text;
+    statusBar.className = 'status-bar' + (busy ? ' busy' : '');
+  }
+
+  // ── Composer ──
+  function updateSendBtn() {
+    const hasContent = (input.value || '').trim().length > 0 || includeActiveEditor || images.length > 0;
+    sendBtn.disabled = !hasContent;
+  }
+
+  function renderChips() {
+    chipsEl.innerHTML = '';
+    if (includeActiveEditor) {
+      const c = document.createElement('span');
+      c.className = 'chip';
+      c.innerHTML = 'Active File <span class="chip-remove">\u00d7</span>';
+      c.querySelector('.chip-remove').addEventListener('click', () => { includeActiveEditor = false; renderChips(); updateSendBtn(); });
+      chipsEl.appendChild(c);
+    }
+    for (let i = 0; i < images.length; i++) {
+      const c = document.createElement('span');
+      c.className = 'chip';
+      c.innerHTML = escapeHtml(images[i].name || 'image') + ' <span class="chip-remove">\u00d7</span>';
+      const idx = i;
+      c.querySelector('.chip-remove').addEventListener('click', () => { images.splice(idx, 1); renderChips(); updateSendBtn(); });
+      chipsEl.appendChild(c);
+    }
+  }
+
+  function submit() {
+    const prompt = (input.value || '').trim();
+    if (!prompt && !includeActiveEditor && images.length === 0) return;
+
+    // Ensure we're in chat view
+    if (!state.currentChatId || !state.chats[state.currentChatId]) {
+      createNewChat();
+    }
+
+    const preview = prompt || (includeActiveEditor ? '[Active editor file]' : '[Image attachment]');
+    addMessage('user', preview);
+    setStatus('PM is thinking\u2026', true);
+
+    vscode.postMessage({ type: 'ask', prompt, includeActiveEditor, images });
+
+    input.value = '';
+    images = [];
+    includeActiveEditor = false;
+    renderChips();
+    updateSendBtn();
+    autoResize();
+    input.focus();
+  }
+
+  function autoResize() {
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  }
+
+  // ── Events ──
+  document.getElementById('newChatBtn').addEventListener('click', createNewChat);
+  document.getElementById('newChatBtn2').addEventListener('click', createNewChat);
+  document.getElementById('backBtn').addEventListener('click', showSessions);
+  sendBtn.addEventListener('click', submit);
+
+  document.getElementById('attachBtn').addEventListener('click', () => {
+    includeActiveEditor = !includeActiveEditor;
+    document.getElementById('attachBtn').classList.toggle('active', includeActiveEditor);
+    renderChips();
+    updateSendBtn();
+  });
+
+  document.getElementById('imageBtn').addEventListener('click', () => {
+    // Trigger paste hint
+    input.focus();
+  });
+
+  input.addEventListener('input', () => { updateSendBtn(); autoResize(); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+  });
+
+  input.addEventListener('paste', event => {
+    const cb = event.clipboardData;
+    if (!cb || !cb.items) return;
+    let found = false;
+    for (const item of cb.items) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      found = true;
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string' && images.length < 5) {
+          images.push({ name: file.name || 'pasted-image', mimeType: file.type || 'image/png', dataUrl: reader.result });
+          renderChips();
+          updateSendBtn();
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    if (found) event.preventDefault();
+  });
+
+  // ── Extension Messages ──
+  window.addEventListener('message', event => {
+    const msg = event.data;
+    if (!msg || typeof msg !== 'object') return;
+
+    if (msg.type === 'chat:status') {
+      setStatus(msg.text || '', true);
+    } else if (msg.type === 'chat:assistant') {
+      addMessage('assistant', msg.text || '');
+      setStatus('Ready', false);
+    } else if (msg.type === 'chat:error') {
+      addMessage('error', msg.text || 'Unknown error');
+      setStatus('Ready', false);
+    } else if (msg.type === 'chat:new-chat') {
+      const id = msg.chatId || genId();
+      state.chats[id] = { id, title: msg.text || 'New Chat', messages: [], createdAt: Date.now() };
+      state.currentChatId = id;
+      persist();
+      showChat(id);
+    } else if (msg.type === 'chat:load-history') {
+      try {
+        const h = JSON.parse(msg.text || '{}');
+        state.chats = h.chats || {};
+        state.currentChatId = h.currentChatId || null;
+        persist();
+        showSessions();
+      } catch(e) {}
+    }
+  });
+
+  // ── Init ──
+  if (!state.chats || Object.keys(state.chats).length === 0) {
+    createNewChat();
+  } else if (state.currentChatId && state.chats[state.currentChatId]) {
+    showChat(state.currentChatId);
+  } else {
+    showSessions();
+  }
+
+  // Tell extension we're ready
+  vscode.postMessage({ type: 'ready' });
+})();
 </script>
 </body>
 </html>`;
-
-    view.webview.html = html;
-    console.log('[extension] Webview HTML set');
   }
 }
 

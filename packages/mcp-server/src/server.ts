@@ -515,14 +515,80 @@ app.post('/api/chat/live/:channel/restore', async (c) => {
 
 // Integrar syncEndpoints
 import { createSyncEndpoints } from './syncEndpoints';
+import { createServicesEndpoints } from './servicesEndpoints';
+import {
+  AdvancedFeaturesFactory,
+  type AdvancedFeaturesConfig,
+} from '@thinkcoffee/core';
 
 const db = getDatabase();
 const syncApp = createSyncEndpoints({ db });
 app.route('/api/sync', syncApp);
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// WEBSOCKET SERVER INTEGRATION
+// ADVANCED FEATURES FACTORY & SERVICES ENDPOINTS
 // ═══════════════════════════════════════════════════════════════════════════════
+
+let advancedFactory: AdvancedFeaturesFactory | null = null;
+
+/**
+ * Inicializar AdvancedFeaturesFactory com configuracoes da aplicacao
+ */
+function initializeAdvancedFeatures(httpServer: http.Server): void {
+  const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+  const projectPath = process.env.PROJECT_PATH || process.cwd();
+
+  const factoryConfig: AdvancedFeaturesConfig = {
+    httpServer,
+    jwtSecret,
+    aiProvider: undefined as any, // Will be injected via environment
+    db,
+    projectPath,
+    enableTaskExecutor: true,
+    enableWebSocket: true,
+    enableWorkflowEngine: true,
+    enableSecurityAnalysis: false, // Desabilitado por default
+    enableAttackSimulation: false, // Desabilitado por default
+    enablePipelineExecution: true,
+    enableStreaming: true,
+    enablePersistence: true,
+    enableMonitoring: true,
+    enableAutomation: true,
+  };
+
+  advancedFactory = new AdvancedFeaturesFactory(factoryConfig);
+
+  // Injetar servicos de chat
+  if (chatHistoryService) {
+    const chatService = getChatService('default');
+    advancedFactory.injectChatServices(chatHistoryService, chatService);
+  }
+
+  // Criar endpoints de servicos e integrar ao app
+  const servicesApp = createServicesEndpoints({
+    pipelineExecutor: advancedFactory.getPipelineExecutor(),
+    streamingChat: advancedFactory.getStreamingChat(),
+    eventStore: advancedFactory.getEventStore(),
+    chatSync: advancedFactory.getChatSync(),
+    safetyNet: advancedFactory.getSafetyNet(),
+    modelFallback: advancedFactory.getModelFallback(),
+    metrics: advancedFactory.getMetrics(),
+    retentionPolicy: advancedFactory.getRetentionPolicy(),
+    diagnosticPipelines: advancedFactory.getDiagnosticPipelines(),
+    workflowExecutor: advancedFactory.getWorkflowExecutor(),
+    workflowTriggers: advancedFactory.getWorkflowTriggers(),
+  });
+
+  app.route('/api/services', servicesApp);
+  console.log('[server] Advanced Features Factory initialized and services endpoints registered');
+}
+
+/**
+ * Obter instancia da Advanced Features Factory
+ */
+export function getAdvancedFactory(): AdvancedFeaturesFactory | null {
+  return advancedFactory;
+}
 
 let webSocketServer: WebSocketServer | null = null;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
@@ -545,6 +611,9 @@ export async function startServer(port: number = 3000): Promise<http.Server> {
     // Integrar Hono no servidor HTTP
     httpServer.on('request', app.fetch as any);
 
+    // Integrar Advanced Features Factory e Services Endpoints
+    initializeAdvancedFeatures(httpServer);
+
     // Integrar WebSocket Server
     webSocketServer = new WebSocketServer(httpServer, JWT_SECRET);
     console.log('[server] WebSocket Server initialized and integrated');
@@ -553,6 +622,7 @@ export async function startServer(port: number = 3000): Promise<http.Server> {
     httpServer.listen(port, () => {
       console.log(`[server] Server running on port ${port}`);
       console.log(`[server] WebSocket endpoint: ws://localhost:${port}`);
+      console.log('[server] Advanced Services available at /api/services/*');
     });
 
     return httpServer;
