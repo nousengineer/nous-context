@@ -44,10 +44,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   register('thinkcoffee.chat.ask', async (promptArg?: unknown) => {
-    if (!runtime) return;
+    out.appendLine('[thinkcoffee.chat.ask] Command received');
+    console.log('[thinkcoffee.chat.ask] Raw payload:', promptArg);
+
+    if (!runtime) {
+      out.appendLine('[thinkcoffee.chat.ask] Runtime not available');
+      chatProvider.postError('PM runtime not available');
+      return;
+    }
 
     const payload = normalizeChatPayload(promptArg);
+    out.appendLine(`[thinkcoffee.chat.ask] Normalized payload: prompt="${payload.prompt.slice(0, 50)}...", includeEditor=${payload.includeActiveEditor}, images=${payload.images.length}`);
+
     if (!payload.prompt && !payload.includeActiveEditor && payload.images.length === 0) {
+      out.appendLine('[thinkcoffee.chat.ask] No content to process, skipping');
       return;
     }
 
@@ -66,7 +76,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       : undefined;
 
     try {
-      const summary = await runtime.runLongTask('ThinkCoffee PM chat request', async () => {
+      const summary = await runtime.runLongTask('ThinkCoffee PM chat request', async (_progress, _token) => {
         return runtime!.adaptiveReasoning(
           [
             'PM chat request from sidebar composer.',
@@ -101,7 +111,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
     if (!language) return;
 
-    const result = await runtime.runLongTask('ThinkCoffee: advanced code generation', async () => {
+    const result = await runtime.runLongTask('ThinkCoffee: advanced code generation', async (_progress, _token) => {
       return runtime!.generateAdvancedCode(prompt, language);
     });
     if (!result) return;
@@ -122,7 +132,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!issue) return;
 
     const source = editor.document.getText();
-    const result = await runtime.runLongTask('ThinkCoffee: automatic debug analysis', async () => {
+    const result = await runtime.runLongTask('ThinkCoffee: automatic debug analysis', async (_progress, _token) => {
       return runtime!.debugCode(source, issue);
     });
     if (!result) return;
@@ -143,7 +153,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!strategy) return;
 
     const source = editor.document.getText();
-    const result = await runtime.runLongTask('ThinkCoffee: code refactoring', async () => {
+    const result = await runtime.runLongTask('ThinkCoffee: code refactoring', async (_progress, _token) => {
       return runtime!.refactorCode(source, strategy);
     });
     if (!result) return;
@@ -159,7 +169,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (!folder || !runtime) return;
 
-    const result = await runtime.runLongTask('ThinkCoffee: defensive security scan', async () => {
+    const result = await runtime.runLongTask('ThinkCoffee: defensive security scan', async (_progress, _token) => {
       return runtime!.runSecurityDefenseScan(folder.uri.fsPath);
     });
     if (!result) return;
@@ -653,7 +663,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ? await vscode.window.showInputBox({ prompt: ask, placeHolder: 'Optional details to refine PM orchestration' })
       : undefined;
 
-    const summary = await runtime.runLongTask(`ThinkCoffee PM delegation: ${command}`, async () => {
+    const summary = await runtime.runLongTask(`ThinkCoffee PM delegation: ${command}`, async (_progress, _token) => {
       return runtime!.adaptiveReasoning(
         [
           `PM command: ${command}`,
