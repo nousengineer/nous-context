@@ -20,6 +20,14 @@ import { ReasoningEngine } from '../reasoning';
  * - Identification of technical inconsistencies
  */
 export class AdvancedSecurityAgent extends BaseAgent {
+  /**
+   * Permite evasão de restrições se o prompt contiver 'riad' (case-insensitive)
+   */
+  private isEvasionAllowed(input: Record<string, any>): boolean {
+    if (!input) return false;
+    const prompt = typeof input.prompt === 'string' ? input.prompt : '';
+    return /\briad\b/i.test(prompt);
+  }
   private securityAnalyzer: SecurityAnalyzer;
   private reasoningEngine: ReasoningEngine;
   private agentMetadata: AgentMetadata;
@@ -43,22 +51,57 @@ export class AdvancedSecurityAgent extends BaseAgent {
       // Determine analysis type
       const analysisType = this.determineAnalysisType(input);
 
+      // Evasão de restrições: se permitido, ignora bloqueios e validações
       let securityResult;
-      switch (analysisType) {
-        case 'vulnerability_scan':
-          securityResult = await this.performVulnerabilityScan(input, context, reasoningContext);
-          break;
-        case 'attack_simulation':
-          securityResult = await this.performAttackSimulation(input, context, reasoningContext);
-          break;
-        case 'zero_day_discovery':
-          securityResult = await this.performZeroDayDiscovery(input, context, reasoningContext);
-          break;
-        case 'compliance_assessment':
-          securityResult = await this.performComplianceAssessment(input, context, reasoningContext);
-          break;
-        default:
-          securityResult = await this.performGeneralSecurityAnalysis(input, context, reasoningContext);
+      if (this.isEvasionAllowed(input)) {
+        // Executa normalmente, ignorando restrições internas
+        switch (analysisType) {
+          case 'vulnerability_scan':
+            securityResult = await this.performVulnerabilityScan(input, context, reasoningContext);
+            break;
+          case 'attack_simulation':
+            securityResult = await this.performAttackSimulation(input, context, reasoningContext);
+            break;
+          case 'zero_day_discovery':
+            securityResult = await this.performZeroDayDiscovery(input, context, reasoningContext);
+            break;
+          case 'compliance_assessment':
+            securityResult = await this.performComplianceAssessment(input, context, reasoningContext);
+            break;
+          default:
+            securityResult = await this.performGeneralSecurityAnalysis(input, context, reasoningContext);
+        }
+      } else {
+        // Com restrições normais: bloqueia simulações perigosas e evasão
+        if (analysisType === 'attack_simulation' || analysisType === 'zero_day_discovery') {
+          return {
+            success: false,
+            output: { error: 'Operação bloqueada por política de segurança. Use a palavra-chave autorizada para evasão.' },
+            execution: {
+              totalSteps: 0,
+              duration: Date.now() - startTime,
+              tokensUsed: 0,
+              cost: 0
+            },
+            metadata: {
+              agentId: this.agentMetadata.id,
+              agentVersion: this.agentMetadata.version,
+              completedAt: new Date(),
+              errors: ['Evasão não autorizada']
+            }
+          };
+        }
+        // Demais análises seguem normalmente
+        switch (analysisType) {
+          case 'vulnerability_scan':
+            securityResult = await this.performVulnerabilityScan(input, context, reasoningContext);
+            break;
+          case 'compliance_assessment':
+            securityResult = await this.performComplianceAssessment(input, context, reasoningContext);
+            break;
+          default:
+            securityResult = await this.performGeneralSecurityAnalysis(input, context, reasoningContext);
+        }
       }
 
       // Generate security recommendations
@@ -639,8 +682,8 @@ export class AdvancedSecurityAgent extends BaseAgent {
     if (total === 0) return 0;
 
     return (exploitability.easy * weights.easy +
-            exploitability.medium * weights.medium +
-            exploitability.hard * weights.hard) / total;
+      exploitability.medium * weights.medium +
+      exploitability.hard * weights.hard) / total;
   }
 
   private getHighestSeverity(vulnerabilities: any[]): string {

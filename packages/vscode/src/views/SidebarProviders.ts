@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 
 interface ChatOutboundMessage {
-  type: 'chat:status' | 'chat:assistant' | 'chat:error';
-  text: string;
+  type: 'chat:status' | 'chat:assistant' | 'chat:error' | 'chat:new-chat' | 'chat:load-history';
+  text?: string;
+  chatId?: string;
 }
 
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
@@ -52,22 +53,125 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ThinkCoffee Chat</title>
 <style>
+* {
+  box-sizing: border-box;
+}
 body {
   font-family: var(--vscode-font-family);
-  padding: 12px;
   color: var(--vscode-editor-foreground);
   margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
-.container {
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+}
+.history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 8px;
+  border-bottom: 1px solid var(--vscode-input-border);
+  overflow-y: auto;
+  max-height: 30%;
+  flex-shrink: 0;
+}
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--vscode-input-border) 50%, transparent);
+}
+.history-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.new-chat-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: 0;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.new-chat-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+.chat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+.chat-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--vscode-input-foreground);
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.chat-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+.chat-item.active {
+  background: color-mix(in srgb, var(--vscode-button-background) 25%, transparent);
+  border-color: var(--vscode-focusBorder);
+  font-weight: 500;
+}
+.chat-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-item-delete {
+  background: transparent;
+  border: 0;
+  color: var(--vscode-errorForeground);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.chat-item:hover .chat-item-delete {
+  opacity: 1;
+}
+.chat-item-delete:hover {
+  opacity: 1 !important;
+}
+.chat-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  height: calc(100vh - 24px);
-}
-h2 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
+  padding: 8px;
+  flex: 1;
+  overflow: hidden;
 }
 .messages {
   flex: 1;
@@ -79,6 +183,12 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.messages.empty {
+  justify-content: center;
+  align-items: center;
+  color: var(--vscode-input-placeholder-foreground);
+  font-size: 12px;
 }
 .msg {
   max-width: 92%;
@@ -117,11 +227,12 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex-shrink: 0;
 }
 .prompt {
   width: 100%;
   min-height: 56px;
-  max-height: 180px;
+  max-height: 120px;
   resize: vertical;
   box-sizing: border-box;
   background: transparent;
@@ -192,24 +303,38 @@ h2 {
 </style>
 </head>
 <body>
-<div class="container">
-<h2>ThinkCoffee Chat</h2>
-<div id="messages" class="messages"></div>
-<div id="status" class="status">PM ready.</div>
-<div class="composer">
-  <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build"></textarea>
-  <div id="chips" class="chips"></div>
-  <div class="toolbar">
-    <button id="attachEditorBtn" class="tool-btn" type="button">+ File</button>
-    <button id="clearImagesBtn" class="tool-btn" type="button">Image</button>
-    <div class="mode">Auto</div>
-    <button id="sendBtn" class="send-btn" type="button" title="Send">^</button>
+<div class="sidebar">
+  <!-- History Section -->
+  <div class="history-section">
+    <div class="history-header">
+      <h3>History</h3>
+      <button id="newChatBtn" class="new-chat-btn" type="button">New</button>
+    </div>
+    <ul id="chatList" class="chat-list"></ul>
+  </div>
+
+  <!-- Chat Section -->
+  <div class="chat-section">
+    <div id="messages" class="messages empty">
+      <span>Start a new conversation</span>
+    </div>
+    <div id="status" class="status">PM ready.</div>
+    <div class="composer">
+      <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build"></textarea>
+      <div id="chips" class="chips"></div>
+      <div class="toolbar">
+        <button id="attachEditorBtn" class="tool-btn" type="button">+ File</button>
+        <button id="clearImagesBtn" class="tool-btn" type="button">Image</button>
+        <div class="mode">Auto</div>
+        <button id="sendBtn" class="send-btn" type="button" title="Send">^</button>
+      </div>
+    </div>
+    <div class="hint">
+      PM executes commands automatically. Paste image in the composer or toggle + File to include the active editor file.
+    </div>
   </div>
 </div>
-<div class="hint">
-  PM executes commands automatically. Paste image in the composer or toggle + File to include the active editor file.
-</div>
-</div>
+
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const input = document.getElementById('chatPrompt');
@@ -219,9 +344,146 @@ const clearImagesBtn = document.getElementById('clearImagesBtn');
 const chips = document.getElementById('chips');
 const messagesEl = document.getElementById('messages');
 const statusEl = document.getElementById('status');
+const chatListEl = document.getElementById('chatList');
+const newChatBtn = document.getElementById('newChatBtn');
 
 let includeActiveEditor = false;
 let images = [];
+let chats = {};
+let currentChatId = null;
+
+// Initialize chats from localStorage
+function initializeChats() {
+  const stored = localStorage.getItem('thinkcoffee:chats');
+  chats = stored ? JSON.parse(stored) : {};
+  
+  const storedCurrentId = localStorage.getItem('thinkcoffee:currentChatId');
+  if (storedCurrentId && chats[storedCurrentId]) {
+    currentChatId = storedCurrentId;
+  }
+  
+  if (!currentChatId) {
+    createNewChat();
+  }
+  
+  renderChatList();
+  loadCurrentChat();
+}
+
+function saveChats() {
+  localStorage.setItem('thinkcoffee:chats', JSON.stringify(chats));
+  localStorage.setItem('thinkcoffee:currentChatId', currentChatId || '');
+}
+
+function generateChatId() {
+  return 'chat_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+function createNewChat() {
+  const chatId = generateChatId();
+  const title = new Date().toLocaleString('en-US', { 
+    month: 'short', 
+    day: 'numeric', 
+    hour: '2-digit', 
+    minute: '2-digit' 
+  });
+  
+  chats[chatId] = {
+    id: chatId,
+    title: title,
+    messages: [],
+    createdAt: Date.now(),
+  };
+  
+  currentChatId = chatId;
+  saveChats();
+  renderChatList();
+  loadCurrentChat();
+}
+
+function deleteChat(chatId) {
+  if (Object.keys(chats).length <= 1) {
+    alert('Cannot delete the last chat');
+    return;
+  }
+  
+  delete chats[chatId];
+  
+  if (currentChatId === chatId) {
+    const remaining = Object.keys(chats)[0];
+    currentChatId = remaining;
+  }
+  
+  saveChats();
+  renderChatList();
+  loadCurrentChat();
+}
+
+function loadCurrentChat() {
+  if (!currentChatId || !chats[currentChatId]) {
+    return;
+  }
+  
+  const chat = chats[currentChatId];
+  messagesEl.innerHTML = '';
+  
+  if (chat.messages.length === 0) {
+    messagesEl.className = 'messages empty';
+    messagesEl.innerHTML = '<span>Start a new conversation</span>';
+  } else {
+    messagesEl.className = 'messages';
+    for (const msg of chat.messages) {
+      const el = document.createElement('div');
+      el.className = 'msg ' + msg.role;
+      el.textContent = msg.text;
+      messagesEl.appendChild(el);
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+}
+
+function renderChatList() {
+  chatListEl.innerHTML = '';
+  
+  const sortedChats = Object.values(chats).sort((a, b) => b.createdAt - a.createdAt);
+  
+  for (const chat of sortedChats) {
+    const li = document.createElement('li');
+    li.className = 'chat-item' + (chat.id === currentChatId ? ' active' : '');
+    
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'chat-item-name';
+    nameSpan.textContent = chat.title;
+    nameSpan.addEventListener('click', () => {
+      currentChatId = chat.id;
+      saveChats();
+      renderChatList();
+      loadCurrentChat();
+    });
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'chat-item-delete';
+    deleteBtn.textContent = '×';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteChat(chat.id);
+    });
+    
+    li.appendChild(nameSpan);
+    li.appendChild(deleteBtn);
+    chatListEl.appendChild(li);
+  }
+}
+
+function addMessageToCurrentChat(role, text) {
+  if (!currentChatId || !chats[currentChatId]) {
+    return;
+  }
+  
+  chats[currentChatId].messages.push({ role, text });
+  saveChats();
+  loadCurrentChat();
+}
 
 function escapeHtml(text) {
   return String(text)
@@ -249,14 +511,6 @@ function setImages(next) {
   renderChips();
 }
 
-function addMessage(role, text) {
-  const el = document.createElement('div');
-  el.className = 'msg ' + role;
-  el.textContent = text;
-  messagesEl.appendChild(el);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
 function setStatus(text) {
   statusEl.textContent = text;
 }
@@ -281,7 +535,8 @@ function submitPrompt() {
     return;
   }
 
-  addMessage('user', buildUserPreview(prompt, includeActiveEditor, images.length));
+  const userPreview = buildUserPreview(prompt, includeActiveEditor, images.length);
+  addMessageToCurrentChat('user', userPreview);
   setStatus('PM thinking...');
 
   vscode.postMessage({
@@ -296,6 +551,7 @@ function submitPrompt() {
   input.focus();
 }
 
+newChatBtn.addEventListener('click', createNewChat);
 send.addEventListener('click', submitPrompt);
 attachEditorBtn.addEventListener('click', () => {
   includeActiveEditor = !includeActiveEditor;
@@ -362,17 +618,19 @@ window.addEventListener('message', event => {
   }
 
   if (message.type === 'chat:assistant' && typeof message.text === 'string') {
-    addMessage('assistant', message.text);
+    addMessageToCurrentChat('assistant', message.text);
     setStatus('PM ready.');
     return;
   }
 
   if (message.type === 'chat:error' && typeof message.text === 'string') {
-    addMessage('error', message.text);
+    addMessageToCurrentChat('error', message.text);
     setStatus('PM ready.');
   }
 });
 
+// Initialize on load
+initializeChats();
 renderChips();
 </script>
 </body>
