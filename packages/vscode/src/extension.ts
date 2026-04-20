@@ -13,6 +13,8 @@ import {
 import { ChatSidebarProvider } from './views';
 
 let runtime: AutonomousRuntime | undefined;
+let pipelineRunning = false;
+let pipelineCurrentAgent = '';
 const RUN_ID_KEY = 'thinkcoffee.currentOrchestratorRunId';
 const PLAN_ID_KEY = 'thinkcoffee.currentOrchestratorPlanId';
 const WORKSPACE_ID_KEY = 'thinkcoffee.currentOrchestratorWorkspaceId';
@@ -91,6 +93,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
 
+    // Guard: if a pipeline/agent is already executing, inform the user
+    if (pipelineRunning) {
+      chatProvider.postAssistant(
+        `⏳ **Agents are working right now** (current: ${pipelineCurrentAgent || 'preparing'})\n\n` +
+        `Wait for the current execution to finish. You'll see results here as each agent completes.`,
+      );
+      return;
+    }
+
     chatProvider.postStatus('PM is analyzing request…');
 
     const editorContext = payload.includeActiveEditor ? buildActiveEditorContext() : undefined;
@@ -111,6 +122,129 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Record the user message in the shared ChatService JSONL channel
     appendChatMessage(projectId, 'programmer', 'request', fullPrompt);
+
+    // ── @mention detection: call agents directly ──
+    const VALID_AGENTS = [
+      'architect', 'backend', 'frontend', 'devops', 'qa',
+      'code-review', 'organizer', 'git', 'dead-code', 'troubleshooter',
+    ];
+    const mentionRegex = /@([\w-]+)/g;
+    const mentionedAgents: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = mentionRegex.exec(fullPrompt)) !== null) {
+      const agent = match[1].toLowerCase();
+      if (VALID_AGENTS.includes(agent) && !mentionedAgents.includes(agent)) {
+        mentionedAgents.push(agent);
+      }
+    }
+
+    if (mentionedAgents.length > 0) {
+      // Direct @mention flow: PM identifies agents and routes tasks
+      const taskText = fullPrompt.replace(/@[\w-]+/g, '').trim();
+      const agentLabels = mentionedAgents.map(a => `@${a}`).join(', ');
+
+      out.appendLine(`[pm:chat] @mention detected: ${agentLabels} task="${taskText.slice(0, 80)}"`);
+
+      // PM analyses and assigns tasks to each mentioned agent
+      chatProvider.postStatus(`PM routing task to ${agentLabels}…`);
+
+      const pmAssignment = await runtime.runLongTask('ThinkCoffee PM', async (_progress, _token) => {
+        const assignPrompt = `The user mentioned specific agents: ${agentLabels}
+User request: "${taskText}"
+
+For each mentioned agent, write a specific task description based on the user's request.
+Respond ONLY with a valid JSON object (no markdown fences):
+{
+  "summary": "Brief explanation of what you understood from the request",
+  "assignments": {
+    "${mentionedAgents[0]}": "Specific task for this agent based on the request"${mentionedAgents.slice(1).map(a => `,\n    "${a}": "Specific task for this agent based on the request"`).join('')}
+  }
+}`;
+        // Use callAgent with PM role to get the assignment
+        const pmResult = await runtime!.callAgent('product-manager', assignPrompt, '', _token);
+        return pmResult.output;
+      });
+
+      let assignments: Record<string, string> = {};
+      let pmSummary = '';
+
+      if (pmAssignment) {
+        const jsonMatch = pmAssignment.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            pmSummary = typeof parsed.summary === 'string' ? parsed.summary : '';
+            if (parsed.assignments && typeof parsed.assignments === 'object') {
+              assignments = parsed.assignments;
+            }
+          } catch { /* fallthrough */ }
+        }
+      }
+
+      // Post PM's analysis
+      const analysisMsg = pmSummary
+        ? `**PM Analysis:** ${pmSummary}\n\nCalling ${agentLabels}…`
+        : `Calling ${agentLabels}…`;
+      chatProvider.postAssistant(analysisMsg);
+      appendChatMessage(projectId, 'pm', 'response', analysisMsg);
+
+      // Execute each agent (parallel if multiple) with progress tracking
+      pipelineRunning = true;
+      const mentionStart = Date.now();
+      const editorCtx = editorContext ? `\n\n[Active editor context]\n${editorContext}` : '';
+      const agentPromises = mentionedAgents.map(async (agent) => {
+        const agentTask = assignments[agent] || taskText || `Execute ${agent} tasks`;
+        pipelineCurrentAgent = agent;
+        chatProvider.postStatus(`@${agent} working…`);
+        const result = await runtime!.callAgent(
+          agent as import('./agents/AutonomousRuntime').AgentRole,
+          agentTask,
+          `User request: ${taskText}${editorCtx}`,
+          undefined,
+          (hb) => chatProvider.postStatus(hb),
+        );
+        return result;
+      });
+
+      const results = await Promise.all(agentPromises);
+
+      for (const r of results) {
+        const elapsed = Math.round((Date.now() - mentionStart) / 1000);
+        const icon = r.status === 'completed' ? '✅' : '❌';
+        const output = r.output.length > 3000
+          ? r.output.slice(0, 3000) + '\n…(truncated)'
+          : r.output;
+        chatProvider.postAssistant(`**@${r.agent}** ${icon} *(${r.model}, ${elapsed}s)*\n\n${output}`);
+        appendChatMessage(projectId, r.agent, 'response', r.output);
+
+        // Handle delegations
+        if (r.delegateTo && r.delegateTo.length > 0) {
+          for (const delegated of r.delegateTo) {
+            chatProvider.postStatus(`@${r.agent} delegated to @${delegated}…`);
+            const delegateResult = await runtime!.callAgent(
+              delegated,
+              `${r.agent} delegated this work to you. Complete based on their output.`,
+              `[${r.agent} output]:\n${r.output.slice(0, 4000)}`,
+              undefined,
+              (hb) => chatProvider.postStatus(hb),
+            );
+            const dIcon = delegateResult.status === 'completed' ? '✅' : '❌';
+            const dOutput = delegateResult.output.length > 3000
+              ? delegateResult.output.slice(0, 3000) + '\n…(truncated)'
+              : delegateResult.output;
+            chatProvider.postAssistant(`**@${delegateResult.agent}** ${dIcon} *(delegated by @${r.agent})*\n\n${dOutput}`);
+            appendChatMessage(projectId, delegateResult.agent, 'response', delegateResult.output);
+          }
+        }
+      }
+
+      pipelineRunning = false;
+      pipelineCurrentAgent = '';
+      chatProvider.postStatus('Ready');
+      return; // Skip normal PM flow
+    }
+
+    // ── Normal PM flow (no @mentions) ──
 
     // Read current pipeline state to give PM context
     const activePipeline = getActivePipeline(projectId);
@@ -136,6 +270,71 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           const status = formatPipelineStatus(pipeline);
           replyText += `\n\n${status}`;
           out.appendLine(`[pm:chat] Pipeline created: ${pipeline.id}`);
+
+          // Collect all agents from pipeline phases
+          const allAgents = pipeline.phases.flatMap(p => p.agents);
+
+          // Post the PM's initial message, then start orchestration
+          chatProvider.postAssistant(replyText);
+          appendChatMessage(projectId, 'pm', 'response', replyText);
+
+          // Execute the pipeline in the background with heartbeat
+          pipelineRunning = true;
+          pipelineCurrentAgent = 'planning';
+          const pipelineStart = Date.now();
+          const heartbeat = setInterval(() => {
+            const elapsed = Math.round((Date.now() - pipelineStart) / 1000);
+            chatProvider.postStatus(
+              `⏳ ${pipelineCurrentAgent} working… (${elapsed}s elapsed)`,
+            );
+          }, 8000);
+
+          chatProvider.postStatus('🚀 Pipeline execution starting…');
+          runtime!.orchestratePipeline(
+            objective,
+            allAgents,
+            (update) => {
+              pipelineCurrentAgent = update.agent;
+              const elapsed = Math.round((Date.now() - pipelineStart) / 1000);
+              if (update.status === 'completed' && update.output) {
+                const summary = update.output.length > 2000
+                  ? update.output.slice(0, 2000) + '\n…(truncated)'
+                  : update.output;
+                chatProvider.postAssistant(
+                  `**[${update.phase}] @${update.agent}** ✅ *(${elapsed}s)*\n\n${summary}`,
+                );
+              } else {
+                chatProvider.postStatus(`⏳ [${update.phase}] @${update.agent}: ${update.status} (${elapsed}s)`);
+              }
+            },
+            undefined,
+          ).then((execution) => {
+            clearInterval(heartbeat);
+            pipelineRunning = false;
+            pipelineCurrentAgent = '';
+            const totalTime = Math.round((Date.now() - pipelineStart) / 1000);
+            const completedCount = execution.phaseResults
+              .flatMap(p => p.results)
+              .filter(r => r.status === 'completed').length;
+            const failedCount = execution.phaseResults
+              .flatMap(p => p.results)
+              .filter(r => r.status === 'failed').length;
+            chatProvider.postAssistant(
+              `🏁 **Pipeline ${execution.status}** *(${totalTime}s total)*\n\n` +
+              `✅ ${completedCount} agents completed, ❌ ${failedCount} failed\n` +
+              `Phases: ${execution.phaseResults.map(p => p.phase).join(' → ')}`,
+            );
+            chatProvider.postStatus('Ready');
+          }).catch((err) => {
+            clearInterval(heartbeat);
+            pipelineRunning = false;
+            pipelineCurrentAgent = '';
+            const msg = err instanceof Error ? err.message : String(err);
+            chatProvider.postError(`Pipeline execution failed: ${msg}`);
+          });
+
+          // Return early since we already posted the reply
+          return;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           replyText += `\n\n⚠️ Could not persist pipeline: ${msg}`;

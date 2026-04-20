@@ -113,6 +113,56 @@ const MEMORY_KEY = 'thinkcoffee.advancedMemory.runSummaries';
 const MAX_MEMORY_ITEMS = 40;
 const WORKFLOW_STATE_PREFIX = 'thinkcoffee.workflowState.';
 
+// ─── Agent role definitions ──────────────────────────────────
+
+export type AgentRole =
+  | 'product-manager' | 'architect' | 'organizer' | 'git' | 'dead-code'
+  | 'troubleshooter' | 'backend' | 'frontend' | 'devops' | 'qa' | 'code-review';
+
+const AGENT_SYSTEM_PROMPTS: Record<AgentRole, string> = {
+  'product-manager': 'You are a Product Manager AI. Analyze objectives and produce structured requirements, acceptance criteria, user stories, and a prioritized backlog. Be specific and actionable.',
+  'architect': 'You are a Software Architect AI. Design technical architecture: technology stack, folder structure, API contracts, data models, and integration points. Produce concrete, implementable designs.',
+  'backend': 'You are a Backend Engineer AI. Implement API endpoints, business logic, database schemas/migrations, and integrations. Write production-ready code.',
+  'frontend': 'You are a Frontend Engineer AI. Create UI components, pages, state management, and API integration. Write clean, accessible, production-ready code.',
+  'devops': 'You are a DevOps Engineer AI. Configure CI/CD pipelines, Dockerfiles, environment variables, deployment scripts, and infrastructure as code.',
+  'qa': 'You are a QA Engineer AI. Write comprehensive unit tests, integration tests, and end-to-end tests. Report bugs with full reproduction steps and coverage analysis.',
+  'code-review': 'You are a Code Reviewer AI. Review for: coding standards, security vulnerabilities, performance issues, architecture consistency, and merge readiness. Be thorough and specific.',
+  'organizer': 'You are a Project Organizer AI. Analyze project structure, identify the ideal design pattern, reorganize folders/files, and fix naming inconsistencies.',
+  'git': 'You are a Git Agent AI. Manage Git workflow: create branches, stage changes, write descriptive commit messages using conventional commits, push, and create PRs.',
+  'dead-code': 'You are a Dead Code Analyzer AI. Identify orphan files, unused exports, unreferenced functions/classes/variables. List everything that can be safely removed.',
+  'troubleshooter': 'You are a Troubleshooter AI. Diagnose failures by analyzing error output, identifying root causes, and providing specific fixes with code changes.',
+};
+
+/** Pipeline execution plan as decided by the PM */
+export interface ExecutionPlan {
+  phases: ExecutionPhase[];
+}
+
+export interface ExecutionPhase {
+  name: string;
+  agents: AgentRole[];
+  parallel: boolean;
+  tasks: Record<string, string>; // agent → task description
+}
+
+export interface AgentResult {
+  agent: AgentRole;
+  model: string;
+  output: string;
+  delegateTo?: AgentRole[];
+  status: 'completed' | 'failed';
+}
+
+export interface PipelineExecution {
+  pipelineId: string;
+  objective: string;
+  phaseResults: Array<{
+    phase: string;
+    results: AgentResult[];
+  }>;
+  status: 'running' | 'completed' | 'failed';
+}
+
 export class AutonomousRuntime {
   private readonly output: vscode.OutputChannel;
   private readonly runs = new Map<string, vscode.CancellationTokenSource>();
@@ -198,6 +248,292 @@ export class AutonomousRuntime {
     }
 
     return { action: 'none', message: raw };
+  }
+
+  // ─── Agent Orchestration ───────────────────────────────────
+
+  /**
+   * Ask PM to create an execution plan: which agents, what order, parallel or sequential.
+   */
+  async planExecution(
+    objective: string,
+    requestedAgents: string[],
+    token?: vscode.CancellationToken,
+  ): Promise<ExecutionPlan> {
+    const planPrompt = `You are orchestrating a software development pipeline.
+
+Objective: ${objective}
+Requested agents: ${requestedAgents.join(', ')}
+
+Available agents and their capabilities:
+${Object.entries(AGENT_SYSTEM_PROMPTS).map(([role, desc]) => `- ${role}: ${desc.slice(0, 80)}`).join('\n')}
+
+Create an execution plan. Decide:
+1. Which phases to create (group agents logically)
+2. For each phase: which agents run, whether they run in parallel or sequential
+3. For each agent: a specific task description based on the objective
+
+Respond ONLY with a valid JSON object (no markdown fences):
+{
+  "phases": [
+    {
+      "name": "Phase name",
+      "parallel": true or false,
+      "agents": ["agent-role-1", "agent-role-2"],
+      "tasks": {
+        "agent-role-1": "Specific task description for this agent",
+        "agent-role-2": "Specific task description for this agent"
+      }
+    }
+  ]
+}`;
+
+    const raw = await this.tryLLM(planPrompt, 'standard', token);
+    if (raw) {
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]) as ExecutionPlan;
+          if (Array.isArray(parsed.phases) && parsed.phases.length > 0) {
+            return parsed;
+          }
+        } catch { /* fallthrough */ }
+      }
+    }
+
+    // Fallback: sequential plan with all requested agents
+    return {
+      phases: [{
+        name: 'Execution',
+        parallel: false,
+        agents: requestedAgents as AgentRole[],
+        tasks: Object.fromEntries(
+          requestedAgents.map(a => [a, `Execute ${a} tasks for: ${objective}`]),
+        ),
+      }],
+    };
+  }
+
+  /**
+   * Call a specific agent with a specific model (by family) and task.
+   */
+  async callAgent(
+    role: AgentRole,
+    task: string,
+    context: string,
+    token?: vscode.CancellationToken,
+    onHeartbeat?: (msg: string) => void,
+  ): Promise<AgentResult> {
+    const systemPrompt = AGENT_SYSTEM_PROMPTS[role] || 'You are a software development agent.';
+    const modelFamily = this.getModelForRole(role);
+
+    this.output.appendLine(`[agent:${role}] Starting with model ${modelFamily}`);
+
+    const prompt = [
+      context ? `Context from previous phases:\n${context}\n` : '',
+      `Your task:\n${task}`,
+      '',
+      'If you need another agent to handle part of this work, include at the END of your response:',
+      'DELEGATE: agent-role-1, agent-role-2',
+      '',
+      'Provide a thorough, actionable response.',
+    ].join('\n');
+
+    try {
+      // Start heartbeat during LLM call
+      const start = Date.now();
+      const hb = onHeartbeat ? setInterval(() => {
+        const secs = Math.round((Date.now() - start) / 1000);
+        onHeartbeat(`@${role} generating response… (${secs}s)`);
+      }, 6000) : undefined;
+
+      const output = await this.tryLLMWithModel(prompt, modelFamily, token, systemPrompt);
+
+      if (hb) clearInterval(hb);
+
+      if (!output) {
+        return { agent: role, model: modelFamily, output: `[${role}] No response from model.`, status: 'failed' };
+      }
+
+      // Check for delegation requests
+      let delegateTo: AgentRole[] | undefined;
+      const delegateMatch = output.match(/DELEGATE:\s*(.+)/i);
+      if (delegateMatch) {
+        const validRoles = Object.keys(AGENT_SYSTEM_PROMPTS) as AgentRole[];
+        delegateTo = delegateMatch[1]
+          .split(',')
+          .map(s => s.trim() as AgentRole)
+          .filter(r => validRoles.includes(r));
+      }
+
+      this.output.appendLine(`[agent:${role}] Completed${delegateTo ? ` (delegates to: ${delegateTo.join(', ')})` : ''}`);
+      return { agent: role, model: modelFamily, output, delegateTo, status: 'completed' };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`[agent:${role}:error] ${msg}`);
+      return { agent: role, model: modelFamily, output: `Error: ${msg}`, status: 'failed' };
+    }
+  }
+
+  /**
+   * Execute a full pipeline: PM plans → agents execute → delegations handled.
+   * Reports progress via callback.
+   */
+  async orchestratePipeline(
+    objective: string,
+    requestedAgents: string[],
+    onProgress: (update: { phase: string; agent: string; status: string; output?: string }) => void,
+    token?: vscode.CancellationToken,
+  ): Promise<PipelineExecution> {
+    const execution: PipelineExecution = {
+      pipelineId: `exec_${Date.now()}`,
+      objective,
+      phaseResults: [],
+      status: 'running',
+    };
+
+    // Step 1: PM creates execution plan
+    onProgress({ phase: 'Planning', agent: 'product-manager', status: 'PM is creating execution plan…' });
+    const plan = await this.planExecution(objective, requestedAgents, token);
+    this.output.appendLine(`[orchestrator] Plan: ${plan.phases.length} phases`);
+
+    // Step 2: Execute each phase
+    let previousContext = `Objective: ${objective}\n`;
+
+    for (const phase of plan.phases) {
+      if (token?.isCancellationRequested) {
+        execution.status = 'failed';
+        break;
+      }
+
+      onProgress({ phase: phase.name, agent: phase.agents.join(', '), status: `Starting phase: ${phase.name}` });
+      const phaseResults: AgentResult[] = [];
+
+      if (phase.parallel && phase.agents.length > 1) {
+        // Run agents in parallel
+        const promises = phase.agents.map(async (agentRole) => {
+          const role = agentRole as AgentRole;
+          const task = phase.tasks[role] || `Execute ${role} tasks for: ${objective}`;
+          onProgress({ phase: phase.name, agent: role, status: `${role} working…` });
+          return this.callAgent(role, task, previousContext, token,
+            (hb) => onProgress({ phase: phase.name, agent: role, status: hb }));
+        });
+        const results = await Promise.all(promises);
+        phaseResults.push(...results);
+      } else {
+        // Run agents sequentially
+        for (const agentRole of phase.agents) {
+          if (token?.isCancellationRequested) break;
+          const role = agentRole as AgentRole;
+          const task = phase.tasks[role] || `Execute ${role} tasks for: ${objective}`;
+          onProgress({ phase: phase.name, agent: role, status: `${role} working…` });
+          const result = await this.callAgent(role, task, previousContext, token,
+            (hb) => onProgress({ phase: phase.name, agent: role, status: hb }));
+          phaseResults.push(result);
+
+          // Handle delegations immediately
+          if (result.delegateTo && result.delegateTo.length > 0) {
+            for (const delegated of result.delegateTo) {
+              if (token?.isCancellationRequested) break;
+              onProgress({ phase: phase.name, agent: delegated, status: `${role} delegated to ${delegated}…` });
+              const delegateContext = `${previousContext}\n\n[${role} output]:\n${result.output.slice(0, 4000)}`;
+              const delegateTask = `${role} delegated this to you. Complete the work based on their output.`;
+              const delegateResult = await this.callAgent(delegated, delegateTask, delegateContext, token,
+                (hb) => onProgress({ phase: phase.name, agent: delegated, status: hb }));
+              phaseResults.push(delegateResult);
+            }
+          }
+
+          // Accumulate context for next agent
+          previousContext += `\n\n[${role} output]:\n${result.output.slice(0, 3000)}`;
+        }
+      }
+
+      // Post phase results
+      for (const r of phaseResults) {
+        onProgress({ phase: phase.name, agent: r.agent, status: 'completed', output: r.output });
+      }
+
+      execution.phaseResults.push({ phase: phase.name, results: phaseResults });
+
+      // Accumulate parallel results for next phase
+      if (phase.parallel) {
+        for (const r of phaseResults) {
+          previousContext += `\n\n[${r.agent} output]:\n${r.output.slice(0, 3000)}`;
+        }
+      }
+    }
+
+    execution.status = token?.isCancellationRequested ? 'failed' : 'completed';
+    this.output.appendLine(`[orchestrator] Pipeline ${execution.status}: ${execution.phaseResults.length} phases executed`);
+    return execution;
+  }
+
+  /** Get the configured model family for an agent role */
+  private getModelForRole(role: AgentRole): string {
+    // Use the model mapping from @thinkcoffee/core agent-config
+    const FREE_TIER_MODELS: Record<string, string> = {
+      'product-manager': 'gpt-4.1',
+      'architect': 'gpt-4o',
+      'organizer': 'gpt-4.1',
+      'git': 'gpt-4.1',
+      'dead-code': 'gpt-4.1',
+      'troubleshooter': 'gpt-4.1',
+      'backend': 'gpt-5-mini',
+      'frontend': 'gpt-4.1',
+      'devops': 'gpt-5-mini',
+      'qa': 'raptor-mini',
+      'code-review': 'gpt-5-mini',
+    };
+    return FREE_TIER_MODELS[role] || 'gpt-4.1';
+  }
+
+  /** Send prompt to a specific model by family name */
+  private async tryLLMWithModel(
+    prompt: string,
+    modelFamily: string,
+    token?: vscode.CancellationToken,
+    systemPrompt?: string,
+  ): Promise<string> {
+    try {
+      const allModels = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+      // Try to find the requested model by family
+      let model = allModels.find(m => m.family === modelFamily);
+      if (!model) {
+        // Fallback: pick any available
+        model = allModels[0];
+        if (model) {
+          this.output.appendLine(`[tryLLMWithModel] Model ${modelFamily} not found, using ${model.family}`);
+        }
+      }
+      if (!model) {
+        this.output.appendLine('[tryLLMWithModel] No models available');
+        return '';
+      }
+
+      const messages = [
+        vscode.LanguageModelChatMessage.User(
+          [systemPrompt || 'You are a technical assistant.', '', prompt].join('\n\n'),
+        ),
+      ];
+
+      const cts = token ? undefined : new vscode.CancellationTokenSource();
+      const useToken = token || cts!.token;
+      try {
+        const response = await model.sendRequest(messages, {}, useToken);
+        let text = '';
+        for await (const chunk of response.text) {
+          text += chunk;
+        }
+        return text.trim();
+      } finally {
+        cts?.dispose();
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`[tryLLMWithModel:error] ${msg}`);
+      return '';
+    }
   }
 
   decomposeProblem(problem: string, maxSteps: number): string[] {

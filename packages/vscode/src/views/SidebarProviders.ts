@@ -191,6 +191,7 @@ body{
   animation:spin .8s linear infinite;display:none;
 }
 .status-bar.busy .spinner{display:inline-block}
+.status-bar.busy{color:var(--vscode-charts-yellow,#cca700)}
 @keyframes spin{to{transform:rotate(360deg)}}
 
 /* ── COMPOSER (bottom) ── */
@@ -227,6 +228,35 @@ body{
 }
 .chip-remove{cursor:pointer;opacity:.7;font-size:12px}
 .chip-remove:hover{opacity:1}
+/* ── @ mention autocomplete ── */
+.mention-popup{
+  position:absolute;bottom:100%;left:0;right:0;
+  background:var(--vscode-editorSuggestWidget-background,var(--vscode-dropdown-background));
+  border:1px solid var(--vscode-editorSuggestWidget-border,var(--vscode-dropdown-border));
+  border-radius:6px;
+  box-shadow:0 4px 12px rgba(0,0,0,.3);
+  max-height:200px;overflow-y:auto;
+  display:none;z-index:10;
+  padding:4px 0;
+}
+.mention-popup.visible{display:block}
+.mention-item{
+  padding:5px 10px;cursor:pointer;
+  font-size:12px;color:var(--vscode-foreground);
+  display:flex;align-items:center;gap:8px;
+}
+.mention-item:hover,.mention-item.active{
+  background:var(--vscode-list-hoverBackground);
+}
+.mention-item .mi-role{
+  font-weight:600;color:var(--vscode-textLink-foreground);
+  min-width:110px;
+}
+.mention-item .mi-desc{
+  opacity:.7;font-size:11px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.composer-input{position:relative}
 .composer-toolbar{
   display:flex;align-items:center;gap:2px;
 }
@@ -283,7 +313,8 @@ body{
   </div>
   <div class="composer">
     <div class="composer-input">
-      <textarea id="chatPrompt" class="prompt" placeholder="Describe what to build" rows="1"></textarea>
+      <div id="mentionPopup" class="mention-popup"></div>
+      <textarea id="chatPrompt" class="prompt" placeholder="Use @agent to call a specific AI, or just describe what to build" rows="1"></textarea>
       <div id="chips" class="chips"></div>
     </div>
     <div class="composer-toolbar">
@@ -470,15 +501,17 @@ body{
     row.className = 'msg-row' + (role === 'error' ? ' msg-error' : '');
 
     const av = document.createElement('div');
+    const isAgent = role !== 'user' && role !== 'error' && role !== 'assistant';
     av.className = 'msg-avatar ' + (role === 'user' ? 'user-av' : 'pm-av');
-    av.textContent = role === 'user' ? 'U' : role === 'error' ? '!' : 'PM';
+    av.textContent = role === 'user' ? 'U' : role === 'error' ? '!' : isAgent ? role.slice(0,2).toUpperCase() : 'PM';
 
     const content = document.createElement('div');
     content.className = 'msg-content';
 
     const roleEl = document.createElement('div');
     roleEl.className = 'msg-role';
-    roleEl.textContent = role === 'user' ? 'You' : role === 'error' ? 'Error' : 'ThinkCoffee PM';
+    const roleLabels = { user:'You', error:'Error', assistant:'ThinkCoffee PM' };
+    roleEl.textContent = roleLabels[role] || ('@' + role);
 
     const textEl = document.createElement('div');
     textEl.className = 'msg-text';
@@ -536,9 +569,21 @@ body{
   }
 
   // ── Status ──
+  let statusTimer = null;
   function setStatus(text, busy) {
     statusText.textContent = text;
     statusBar.className = 'status-bar' + (busy ? ' busy' : '');
+    // Clear any existing elapsed timer
+    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+    if (busy && text.includes('working')) {
+      // Show elapsed seconds in status bar
+      const start = Date.now();
+      statusTimer = setInterval(() => {
+        const secs = Math.round((Date.now() - start) / 1000);
+        const base = text.replace(/\(\d+s.*\)/, '').trim();
+        statusText.textContent = base + ' (' + secs + 's)';
+      }, 1000);
+    }
   }
 
   // ── Composer ──
@@ -613,10 +658,104 @@ body{
     input.focus();
   });
 
-  input.addEventListener('input', () => { updateSendBtn(); autoResize(); });
+  // ── @Mention autocomplete ──
+  const AGENTS = [
+    { role: 'architect', label: 'Architect', desc: 'Design architecture & tech stack' },
+    { role: 'backend', label: 'Backend', desc: 'Implement APIs & business logic' },
+    { role: 'frontend', label: 'Frontend', desc: 'UI components & pages' },
+    { role: 'devops', label: 'DevOps', desc: 'CI/CD & infrastructure' },
+    { role: 'qa', label: 'QA', desc: 'Tests & bug reports' },
+    { role: 'code-review', label: 'Code Review', desc: 'Review code quality & security' },
+    { role: 'organizer', label: 'Organizer', desc: 'Organize project structure' },
+    { role: 'git', label: 'Git', desc: 'Commits, branches & PRs' },
+    { role: 'dead-code', label: 'Dead Code', desc: 'Remove unused code' },
+    { role: 'troubleshooter', label: 'Troubleshooter', desc: 'Diagnose & fix failures' },
+  ];
+  const mentionPopup = document.getElementById('mentionPopup');
+  let mentionActive = false;
+  let mentionStart = -1;
+  let mentionIdx = 0;
+  let filteredAgents = [];
+
+  function getMentionQuery() {
+    const pos = input.selectionStart;
+    const text = input.value.slice(0, pos);
+    const at = text.lastIndexOf('@');
+    if (at < 0) return null;
+    // Make sure @ is at start or after whitespace
+    if (at > 0 && !/\s/.test(text[at - 1])) return null;
+    return { start: at, query: text.slice(at + 1).toLowerCase() };
+  }
+
+  function renderMentionPopup() {
+    const m = getMentionQuery();
+    if (!m) { hideMentions(); return; }
+    mentionStart = m.start;
+    filteredAgents = AGENTS.filter(a =>
+      a.role.includes(m.query) || a.label.toLowerCase().includes(m.query) || a.desc.toLowerCase().includes(m.query)
+    );
+    if (filteredAgents.length === 0) { hideMentions(); return; }
+    mentionActive = true;
+    mentionIdx = 0;
+    mentionPopup.innerHTML = '';
+    filteredAgents.forEach((a, i) => {
+      const el = document.createElement('div');
+      el.className = 'mention-item' + (i === 0 ? ' active' : '');
+      el.innerHTML = '<span class="mi-role">@' + escapeHtml(a.role) + '</span><span class="mi-desc">' + escapeHtml(a.desc) + '</span>';
+      el.addEventListener('mousedown', e => { e.preventDefault(); selectMention(i); });
+      mentionPopup.appendChild(el);
+    });
+    mentionPopup.classList.add('visible');
+  }
+
+  function hideMentions() {
+    mentionActive = false;
+    mentionPopup.classList.remove('visible');
+    mentionPopup.innerHTML = '';
+  }
+
+  function selectMention(idx) {
+    const agent = filteredAgents[idx];
+    if (!agent) return;
+    const before = input.value.slice(0, mentionStart);
+    const after = input.value.slice(input.selectionStart);
+    input.value = before + '@' + agent.role + ' ' + after;
+    const cursor = before.length + agent.role.length + 2;
+    input.setSelectionRange(cursor, cursor);
+    hideMentions();
+    updateSendBtn();
+    input.focus();
+  }
+
+  input.addEventListener('input', () => { updateSendBtn(); autoResize(); renderMentionPopup(); });
   input.addEventListener('keydown', e => {
+    if (mentionActive) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionIdx = (mentionIdx + 1) % filteredAgents.length;
+        mentionPopup.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('active', i === mentionIdx));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionIdx = (mentionIdx - 1 + filteredAgents.length) % filteredAgents.length;
+        mentionPopup.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('active', i === mentionIdx));
+        return;
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        selectMention(mentionIdx);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMentions();
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   });
+  input.addEventListener('blur', () => { setTimeout(hideMentions, 150); });
 
   input.addEventListener('paste', event => {
     const cb = event.clipboardData;
