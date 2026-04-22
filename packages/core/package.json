@@ -12,12 +12,14 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "jsonwebtoken": "^9.0.3",
     "reflect-metadata": "^0.1.13",
     "sqlite3": "^5.1.7",
     "typeorm": "^0.3.28",
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^20.19.39",
     "@vitest/coverage-v8": "^1.2.0",
     "typescript": "^5.1.6",

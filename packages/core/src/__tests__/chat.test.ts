@@ -18,6 +18,7 @@ describe('ChatService', () => {
     vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
     vi.mocked(fs.writeFileSync).mockReturnValue(undefined);
     vi.mocked(fs.appendFileSync).mockReturnValue(undefined);
+    vi.mocked(fs.renameSync).mockReturnValue(undefined);
   });
 
   describe('constructor', () => {
@@ -197,15 +198,18 @@ describe('ChatService', () => {
   describe('getUnread', () => {
     it('should return unread programmer messages', () => {
       const messages = [
-        { id: '1', sender: 'programmer', type: 'request', read: false, content: 'Msg1', timestamp: '' },
-        { id: '2', sender: 'programmer', type: 'request', read: true, content: 'Msg2', timestamp: '' },
-        { id: '3', sender: 'agent', type: 'response', read: false, content: 'Msg3', timestamp: '' },
+        { id: '1', sender: 'programmer', type: 'request', content: 'Msg1', timestamp: '' },
+        { id: '2', sender: 'programmer', type: 'request', content: 'Msg2', timestamp: '' },
+        { id: '3', sender: 'agent', type: 'response', content: 'Msg3', timestamp: '' },
         { id: '4', sender: 'programmer', type: 'request', content: 'Msg4', timestamp: '' },
       ];
 
-      vi.mocked(fs.readFileSync).mockReturnValue(
-        messages.map(m => JSON.stringify(m)).join('\n')
-      );
+      const jsonlContent = messages.map(m => JSON.stringify(m)).join('\n');
+      // Message '2' is already recorded as read in the .read.json sidecar file
+      vi.mocked(fs.readFileSync).mockImplementation((filePath: fs.PathLike | number) => {
+        if (String(filePath).endsWith('.read.json')) return '["2"]';
+        return jsonlContent;
+      });
 
       const service = new ChatService();
       const unread = service.getUnread();
@@ -219,8 +223,8 @@ describe('ChatService', () => {
   describe('markRead', () => {
     it('should mark specific message as read', () => {
       const messages = [
-        { id: '1', sender: 'programmer', type: 'request', read: false, content: 'Msg1', timestamp: '' },
-        { id: '2', sender: 'programmer', type: 'request', read: false, content: 'Msg2', timestamp: '' },
+        { id: '1', sender: 'programmer', type: 'request', content: 'Msg1', timestamp: '' },
+        { id: '2', sender: 'programmer', type: 'request', content: 'Msg2', timestamp: '' },
       ];
 
       vi.mocked(fs.readFileSync).mockReturnValue(
@@ -230,20 +234,23 @@ describe('ChatService', () => {
       const service = new ChatService();
       service.markRead('1');
 
-      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[1];
-      const written = writeCall[1] as string;
-      
-      expect(written).toContain('"id":"1"');
-      expect(written).toContain('"read":true');
+      // The implementation writes a JSON array of read IDs to a .tmp file then renames it
+      const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+      const tmpWrite = writeCalls.find(c => String(c[0]).endsWith('.tmp'));
+      expect(tmpWrite).toBeDefined();
+      const writtenIds = JSON.parse(tmpWrite![1] as string) as string[];
+      expect(writtenIds).toContain('1');
+      expect(writtenIds).not.toContain('2');
+      expect(fs.renameSync).toHaveBeenCalled();
     });
   });
 
   describe('markAllRead', () => {
     it('should mark all programmer messages as read', () => {
       const messages = [
-        { id: '1', sender: 'programmer', type: 'request', read: false, content: 'Msg1', timestamp: '' },
-        { id: '2', sender: 'agent', type: 'response', read: false, content: 'Msg2', timestamp: '' },
-        { id: '3', sender: 'programmer', type: 'request', read: false, content: 'Msg3', timestamp: '' },
+        { id: '1', sender: 'programmer', type: 'request', content: 'Msg1', timestamp: '' },
+        { id: '2', sender: 'agent', type: 'response', content: 'Msg2', timestamp: '' },
+        { id: '3', sender: 'programmer', type: 'request', content: 'Msg3', timestamp: '' },
       ];
 
       vi.mocked(fs.readFileSync).mockReturnValue(
@@ -253,14 +260,15 @@ describe('ChatService', () => {
       const service = new ChatService();
       service.markAllRead();
 
-      const writeCall = vi.mocked(fs.writeFileSync).mock.calls[1];
-      const written = writeCall[1] as string;
-      const lines = written.trim().split('\n');
-      const parsed = lines.map(l => JSON.parse(l));
-
-      expect(parsed[0].read).toBe(true); // programmer message
-      expect(parsed[1].read).toBeUndefined(); // agent message
-      expect(parsed[2].read).toBe(true); // programmer message
+      // The implementation writes a JSON array of read IDs to a .tmp file then renames it
+      const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+      const tmpWrite = writeCalls.find(c => String(c[0]).endsWith('.tmp'));
+      expect(tmpWrite).toBeDefined();
+      const writtenIds = JSON.parse(tmpWrite![1] as string) as string[];
+      expect(writtenIds).toContain('1'); // programmer message
+      expect(writtenIds).not.toContain('2'); // agent message — not added to read list
+      expect(writtenIds).toContain('3'); // programmer message
+      expect(fs.renameSync).toHaveBeenCalled();
     });
   });
 

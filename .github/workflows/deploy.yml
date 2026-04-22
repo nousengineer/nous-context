@@ -28,7 +28,7 @@ on:
       skip_backup:
         description: "Skip pre-deploy backup (dangerous)"
         required: false
-        default: "false"
+        default: false
         type: boolean
 
   # Auto-deploy to staging quando release workflow conclui com sucesso

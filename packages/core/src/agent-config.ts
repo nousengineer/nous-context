@@ -9,13 +9,27 @@ import type { AgentRole } from './pipeline';
  * Quality presets — um modo por multiplicador de custo Copilot:
  *
  * - free-tier (0x):           Totalmente gratuito. GPT-4.1, GPT-4o, GPT-5 mini, Raptor mini.
- * - budget-tier (0.25x):      Quase gratis. Grok Code Fast 1.
- * - lite-tier (0.33x):        Fast/Mini models. Haiku, Gemini Flash, GPT-5.4 mini.
- * - standard-tier (1x):       Tier padrao. Sonnet, Gemini Pro, GPT-5.x.
- * - premium-tier (3x):        Premium. Claude Opus.
- * - ultra-tier (30x):         Ultra. Claude Opus 4.6 fast mode.
+ * - budget-tier (0x):          Mesmo conjunto de modelos gratuitos, mantido apenas por compatibilidade.
+ * - lite-tier (0x):            Mesmo conjunto de modelos gratuitos, mantido apenas por compatibilidade.
+ * - standard-tier (0x):        Mesmo conjunto de modelos gratuitos, mantido apenas por compatibilidade.
+ * - premium-tier (0x):         Mesmo conjunto de modelos gratuitos, mantido apenas por compatibilidade.
+ * - ultra-tier (0x):           Mesmo conjunto de modelos gratuitos, mantido apenas por compatibilidade.
  */
 export type QualityPreset = 'free-tier' | 'budget-tier' | 'lite-tier' | 'standard-tier' | 'premium-tier' | 'ultra-tier';
+
+const FREE_TIER_MODELS: Record<AgentRole, string> = {
+  'product-manager': 'gpt-4.1',
+  'architect': 'gpt-4o',
+  'organizer': 'gpt-4.1',
+  'git': 'gpt-4.1',
+  'dead-code': 'gpt-4.1',
+  'troubleshooter': 'gpt-4.1',
+  'backend': 'gpt-5-mini',
+  'frontend': 'gpt-4.1',
+  'devops': 'gpt-5-mini',
+  'qa': 'raptor-mini',
+  'code-review': 'gpt-5-mini',
+};
 
 export const QUALITY_PRESETS: Record<QualityPreset, {
   label: string;
@@ -31,19 +45,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
     subtitle: 'Gratuito (0x)',
     description: 'Zero custo. So modelos inclusos no plano gratuito. Ideal pra hotfix rapido, POC descartavel, ou quando o budget ja era. Nenhuma credencial de API necessaria!',
     costRange: { min: 0, max: 0 },
-    models: {
-      'product-manager': 'gpt-4.1',          // Melhor raciocinio no tier free
-      'architect': 'gpt-4o',                 // Bom raciocinio geral
-      'organizer': 'gpt-4.1',                // Organiza projeto
-      'git': 'gpt-4.1',                      // Git operations
-      'dead-code': 'gpt-4.1',                // Dead code analysis
-      'troubleshooter': 'gpt-4.1',           // Fix problems
-      'backend': 'gpt-5-mini',               // Mini capaz pra code
-      'frontend': 'gpt-4.1',                 // Geral
-      'devops': 'gpt-5-mini',                // Mini capaz
-      'qa': 'raptor-mini',                   // Review rapido
-      'code-review': 'gpt-5-mini',            // Review alternativo
-    },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
       'gpt-4o',             // Forte raciocinio
       'gpt-4.1',            // Solido
@@ -51,135 +53,74 @@ export const QUALITY_PRESETS: Record<QualityPreset, {
       'raptor-mini',        // Alternativo
     ],
   },
-  // ─── TIER 0.25x: BUDGET (Grok Code Fast) ──────────────────────────────────
+  // ─── TIER 0x: BUDGET (Compatibilidade) ──────────────────────────────────
   'budget-tier': {
     label: 'Pingado',
-    subtitle: 'Budget (0.25x)',
-    description: 'Custo minimo absoluto. So Grok Code Fast 1. Bom pra iteracoes rapidas, drafts, hotfixes quando free nao basta.',
-    costRange: { min: 0.25, max: 0.25 },
-    models: {
-      'product-manager': 'grok-code-fast-1',     // 0.25x
-      'architect': 'grok-code-fast-1',           // 0.25x
-      'organizer': 'grok-code-fast-1',           // 0.25x
-      'git': 'grok-code-fast-1',                 // 0.25x
-      'dead-code': 'grok-code-fast-1',           // 0.25x
-      'troubleshooter': 'grok-code-fast-1',      // 0.25x
-      'backend': 'grok-code-fast-1',             // 0.25x
-      'frontend': 'grok-code-fast-1',            // 0.25x
-      'devops': 'grok-code-fast-1',              // 0.25x
-      'qa': 'grok-code-fast-1',                  // 0.25x
-      'code-review': 'grok-code-fast-1',         // 0.25x
-    },
+    subtitle: 'Gratuito (0x)',
+    description: 'Compatibilidade apenas. Usa os mesmos modelos gratuitos do tier free.',
+    costRange: { min: 0, max: 0 },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
-      'grok-code-fast-1',      // 0.25x — unico modelo neste tier
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5-mini',
+      'raptor-mini',
     ],
   },
-  // ─── TIER 0.33x: LITE (Fast/Mini models) ────────────────────────────────
+  // ─── TIER 0x: LITE (Compatibilidade) ───────────────────────────────────
   'lite-tier': {
     label: 'Cafe com Leite',
-    subtitle: 'Leve (0.33x)',
-    description: 'Fast/mini models. Claude Haiku, Gemini Flash, GPT-5.4 mini. Analise rapida, drafts, iteracoes com mais opcoes que o budget.',
-    costRange: { min: 0.33, max: 0.33 },
-    models: {
-      'product-manager': 'gpt-5.4-mini',         // 0.33x — melhor raciocinio mini
-      'architect': 'gemini-3-flash',             // 0.33x — contexto rapido
-      'organizer': 'gemini-3-flash',             // 0.33x — organize rapido
-      'git': 'gpt-5.4-mini',                    // 0.33x — git rapido
-      'dead-code': 'gpt-5.4-mini',               // 0.33x — analise rapida
-      'troubleshooter': 'claude-haiku-4.5',      // 0.33x — fix rapido
-      'backend': 'gpt-5.1-codex-mini',           // 0.33x — code rapido
-      'frontend': 'gpt-5.1-codex-mini',          // 0.33x — UI rapida
-      'devops': 'gpt-5.4-mini',                  // 0.33x — ops rapido
-      'qa': 'claude-haiku-4.5',                  // 0.33x — testes rapidos
-      'code-review': 'gemini-3-flash',           // 0.33x — review rapido
-    },
+    subtitle: 'Gratuito (0x)',
+    description: 'Compatibilidade apenas. Usa os mesmos modelos gratuitos do tier free.',
+    costRange: { min: 0, max: 0 },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
-      'gpt-5.4-mini',          // 0.33x — melhor raciocinio lite
-      'gemini-3-flash',        // 0.33x — respostas rapidas
-      'claude-haiku-4.5',      // 0.33x — analise rapida
-      'gpt-5.1-codex-mini',    // 0.33x — code mini
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5-mini',
+      'raptor-mini',
     ],
   },
-  // ─── TIER 1x: STANDARD (Baseline models) ───────────────────────────────
+  // ─── TIER 0x: STANDARD (Compatibilidade) ───────────────────────────────
   'standard-tier': {
     label: 'Café Coado',
-    subtitle: 'Padrão (1x)',
-    description: 'Tier baseline. Equilibrio custo/qualidade. Ideal pra desenvolvimento normal, features, refactors. PM usa Sonnet 4.6. Dia a dia em producao.',
-    costRange: { min: 1, max: 1 },
-    models: {
-      'product-manager': 'claude-sonnet-4.6',    // 1x — melhor PM standard
-      'architect': 'gemini-2.5-pro',             // 1x — contexto longo, design
-      'organizer': 'claude-sonnet-4.6',          // 1x — organiza estrutura
-      'git': 'claude-sonnet-4.6',                // 1x — git operations
-      'dead-code': 'claude-sonnet-4.6',          // 1x — dead code analysis
-      'troubleshooter': 'claude-sonnet-4.6',     // 1x — diagnostica e corrige
-      'backend': 'gpt-5.4',                      // 1x — code solido
-      'frontend': 'gpt-5.2-codex',               // 1x — UI code
-      'devops': 'claude-sonnet-4.6',             // 1x — operacoes equilibradas
-      'qa': 'gpt-5.2',                           // 1x — testes solidos
-      'code-review': 'gpt-5.1-codex',            // 1x — review solido
-    },
+    subtitle: 'Gratuito (0x)',
+    description: 'Compatibilidade apenas. Usa os mesmos modelos gratuitos do tier free.',
+    costRange: { min: 0, max: 0 },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
-      'claude-sonnet-4.6',      // 1x — melhor raciocinio standard
-      'gemini-2.5-pro',         // 1x — contexto longo
-      'gemini-3-pro',           // 1x — raciocinio pro
-      'gpt-5.4',                // 1x — muito capaz code
-      'gpt-5.3-codex',          // 1x — code premium
-      'gpt-5.2-codex',          // 1x — code solido
-      'gpt-5.2',                // 1x — geral
-      'gpt-5.1-codex',          // 1x — code basico
-      'gpt-5.1-codex-max',      // 1x — code maximo
-      'claude-sonnet-4.5',      // 1x — sonnet anterior
-      'claude-sonnet-4',        // 1x — sonnet basico
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5-mini',
+      'raptor-mini',
     ],
   },
-  // ─── TIER 3x: PREMIUM (Opus models) ───────────────────────────────────
+  // ─── TIER 0x: PREMIUM (Compatibilidade) ─────────────────────────────────
   'premium-tier': {
     label: 'Espresso Duplo',
-    subtitle: 'Premium (3x)',
-    description: 'Quando tem que ficar bom. Modelos Opus. Arquitetura de sistema, migrations criticas, features complexas. PM toma Opus 4.6 e cobra resultado.',
-    costRange: { min: 3, max: 3 },
-    models: {
-      'product-manager': 'claude-opus-4.6',      // 3x — melhor raciocinio
-      'architect': 'claude-opus-4.6',            // 3x — melhor pra arquitetura
-      'organizer': 'claude-opus-4.6',            // 3x — reestrutura com precisao
-      'git': 'claude-opus-4.6',                  // 3x — git profundo
-      'dead-code': 'claude-opus-4.6',            // 3x — deep analysis
-      'troubleshooter': 'claude-opus-4.6',       // 3x — resolve tudo
-      'backend': 'claude-opus-4.5',              // 3x — code premium
-      'frontend': 'claude-opus-4.6',             // 3x — raciocinio profundo UI
-      'devops': 'claude-opus-4.6',               // 3x — infra critica
-      'qa': 'claude-opus-4.6',                   // 3x — testa exaustivamente
-      'code-review': 'claude-opus-4.6',          // 3x — revisao com lupa
-    },
+    subtitle: 'Gratuito (0x)',
+    description: 'Compatibilidade apenas. Usa os mesmos modelos gratuitos do tier free.',
+    costRange: { min: 0, max: 0 },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
-      'claude-opus-4.6',      // 3x — topo absoluto
-      'claude-opus-4.5',      // 3x — raciocinio profundo
-      'gpt-5.4',              // 3x — muito capaz
-      'gemini-3.1-pro',       // 3x — contexto maximo
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5-mini',
+      'raptor-mini',
     ],
   },
-  // ─── TIER 30x: ULTRA (Opus 4.6 fast mode) ──────────────────────────────
+  // ─── TIER 0x: ULTRA (Compatibilidade) ──────────────────────────────────
   'ultra-tier': {
     label: 'Ristretto',
-    subtitle: 'Ultra (30x)',
-    description: 'Nivel maximo absoluto. So Claude Opus 4.6 fast mode. Lancamento de produto, critical deadlines, decisions that matter.',
-    costRange: { min: 30, max: 30 },
-    models: {
-      'product-manager': 'claude-opus-4.6-fast',    // 30x — top absoluto
-      'architect': 'claude-opus-4.6-fast',          // 30x — arquitetura maximo
-      'organizer': 'claude-opus-4.6-fast',          // 30x — estrutura perfeita
-      'git': 'claude-opus-4.6-fast',                // 30x — git perfeito
-      'dead-code': 'claude-opus-4.6-fast',          // 30x — analise completa
-      'troubleshooter': 'claude-opus-4.6-fast',     // 30x — resolve qualquer coisa
-      'backend': 'claude-opus-4.6-fast',            // 30x — backend perfeito
-      'frontend': 'claude-opus-4.6-fast',           // 30x — UI perfeita
-      'devops': 'claude-opus-4.6-fast',             // 30x — infra perfeita
-      'qa': 'claude-opus-4.6-fast',                 // 30x — testes perfeitos
-      'code-review': 'claude-opus-4.6-fast',        // 30x — revisao perfeita
-    },
+    subtitle: 'Gratuito (0x)',
+    description: 'Compatibilidade apenas. Usa os mesmos modelos gratuitos do tier free.',
+    costRange: { min: 0, max: 0 },
+    models: { ...FREE_TIER_MODELS },
     ranking: [
-      'claude-opus-4.6-fast',  // 30x — nivel maximo
+      'gpt-4o',
+      'gpt-4.1',
+      'gpt-5-mini',
+      'raptor-mini',
     ],
   },
 };
@@ -223,47 +164,6 @@ export const AVAILABLE_MODELS = [
   { family: 'gpt-5-mini', label: 'GPT-5 mini', tier: 'free', vendor: 'copilot', cost: 0 as CostMultiplier },
   { family: 'raptor-mini', label: 'Raptor mini (Preview)', tier: 'free', vendor: 'copilot', cost: 0 as CostMultiplier },
   { family: 'goldeneye', label: 'Goldeneye', tier: 'free', vendor: 'copilot', cost: 0 as CostMultiplier },
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // TIER 0.25x (Lite) — Grok Code Fast
-  // ═════════════════════════════════════════════════════════════════════════
-  { family: 'grok-code-fast-1', label: 'Grok Code Fast 1', tier: 'lite', vendor: 'copilot', cost: 0.25 as CostMultiplier },
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // TIER 0.33x (Lite) — Fast/Mini Models
-  // ═════════════════════════════════════════════════════════════════════════
-  { family: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', tier: 'lite', vendor: 'copilot', cost: 0.33 as CostMultiplier },
-  { family: 'gemini-3-flash', label: 'Gemini 3 Flash (Preview)', tier: 'lite', vendor: 'copilot', cost: 0.33 as CostMultiplier },
-  { family: 'gpt-5.4-mini', label: 'GPT-5.4 mini', tier: 'lite', vendor: 'copilot', cost: 0.33 as CostMultiplier },
-  { family: 'gpt-5.1-codex-mini', label: 'GPT-5.1-Codex-Mini', tier: 'lite', vendor: 'copilot', cost: 0.33 as CostMultiplier },
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // TIER 1x (Standard) — Baseline Models
-  // ═════════════════════════════════════════════════════════════════════════
-  { family: 'claude-sonnet-4', label: 'Claude Sonnet 4', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'claude-sonnet-4.6', label: 'Claude Sonnet 4.6', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gemini-3-pro', label: 'Gemini 3 Pro', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro (Preview)', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.1', label: 'GPT-5.1', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.1-codex', label: 'GPT-5.1-Codex', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.1-codex-max', label: 'GPT-5.1-Codex-Max', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.2', label: 'GPT-5.2', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.2-codex', label: 'GPT-5.2-Codex', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.3-codex', label: 'GPT-5.3-Codex', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-  { family: 'gpt-5.4', label: 'GPT-5.4', tier: 'standard', vendor: 'copilot', cost: 1 as CostMultiplier },
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // TIER 3x (Premium) — Opus Models
-  // ═════════════════════════════════════════════════════════════════════════
-  { family: 'claude-opus-4.5', label: 'Claude Opus 4.5', tier: 'premium', vendor: 'copilot', cost: 3 as CostMultiplier },
-  { family: 'claude-opus-4.6', label: 'Claude Opus 4.6', tier: 'premium', vendor: 'copilot', cost: 3 as CostMultiplier },
-
-  // ═════════════════════════════════════════════════════════════════════════
-  // TIER 30x (Ultra Premium) — Opus Fast Mode
-  // ═════════════════════════════════════════════════════════════════════════
-  { family: 'claude-opus-4.6-fast', label: 'Claude Opus 4.6 (fast mode) (preview)', tier: 'ultra-premium', vendor: 'copilot', cost: 30 as CostMultiplier },
 ] as const;
 
 export type ModelFamily = typeof AVAILABLE_MODELS[number]['family'];
@@ -292,7 +192,13 @@ export function loadAgentConfig(): AgentModelConfig {
   const configPath = getConfigPath();
   try {
     if (fs.existsSync(configPath)) {
-      return JSON.parse(fs.readFileSync(configPath, 'utf-8')) as AgentModelConfig;
+      const loaded = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as AgentModelConfig;
+      // Enforce fixed free-tier configuration regardless of persisted mode.
+      return {
+        ...loaded,
+        mode: 'free-tier',
+        models: { ...QUALITY_PRESETS['free-tier'].models },
+      };
     }
   } catch (err) {
     console.error(`[ThinkCoffee] Failed to load agent config: ${(err as Error).message}`);
@@ -306,21 +212,28 @@ export function saveAgentConfig(config: AgentModelConfig): void {
   const configPath = getConfigPath();
   const dir = path.dirname(configPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+  const normalized: AgentModelConfig = {
+    ...config,
+    mode: 'free-tier',
+    models: { ...QUALITY_PRESETS['free-tier'].models },
+  };
+  fs.writeFileSync(configPath, JSON.stringify(normalized, null, 2), 'utf-8');
 }
 
 /** Get model family for a specific agent — respects active preset, falls back to free-tier */
 export function getModelForAgent(role: AgentRole, config?: AgentModelConfig): string {
   const cfg = config || loadAgentConfig();
-  if (cfg.models[role]) return cfg.models[role];
+  const candidate = cfg.models[role];
+  if (candidate && getModelCost(candidate) === 0) return candidate;
 
   // Resolve legacy preset names
   const resolved = resolvePreset(cfg.mode) as QualityPreset;
   if (isQualityPreset(resolved)) {
     const presetModel = QUALITY_PRESETS[resolved]?.models[role];
-    if (presetModel) return presetModel;
+    if (presetModel && getModelCost(presetModel) === 0) return presetModel;
   }
-  // Final fallback: free-tier (never spend money by accident)
+
+  // Final fallback: free-tier only
   return QUALITY_PRESETS['free-tier'].models[role];
 }
 
@@ -345,9 +258,11 @@ export function applyQualityPreset(preset: QualityPreset | string): AgentModelCo
   const presetData = QUALITY_PRESETS[resolved];
   if (!presetData) throw new Error(`Preset desconhecido: ${preset}`);
 
+  // Enforce free-only configuration: qualquer preset diferente de free-tier resolve para free-tier.
+  const safePreset = resolved === 'free-tier' ? 'free-tier' : 'free-tier';
   const config: AgentModelConfig = {
-    mode: resolved,
-    models: { ...presetData.models },
+    mode: safePreset,
+    models: { ...QUALITY_PRESETS['free-tier'].models },
   };
   saveAgentConfig(config);
   return config;
@@ -380,6 +295,9 @@ export function getPresetRanking(preset: QualityPreset): string[] {
 /** Get the PM model for a given preset */
 export function getPMModelForPreset(preset: QualityPreset | string): string {
   const resolved = resolvePreset(preset) as QualityPreset;
+  if (resolved !== 'free-tier') {
+    return QUALITY_PRESETS['free-tier'].models['product-manager'];
+  }
   return QUALITY_PRESETS[resolved]?.models['product-manager'] ?? QUALITY_PRESETS['free-tier'].models['product-manager'];
 }
 

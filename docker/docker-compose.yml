@@ -1,0 +1,159 @@
+version: '3.8'
+
+# ThinkCoffee - Docker Compose Configuration
+# Services: app, postgres, redis, pgadmin (dev only)
+
+services:
+  # Application Service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NODE_VERSION: "20"
+    
+    container_name: thinkcoffee-app
+    image: thinkcoffee:latest
+    
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    
+    environment:
+      # Application Config
+      NODE_ENV: ${NODE_ENV:-development}
+      APP_PORT: 3000
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      
+      # Database Config
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-thinkcoffee}
+      DB_USER: ${DB_USER:-thinkcoffee_user}
+      DB_PASSWORD: ${DB_PASSWORD:-devpassword}
+      DATABASE_URL: postgres://${DB_USER:-thinkcoffee_user}:${DB_PASSWORD:-devpassword}@postgres:5432/${DB_NAME:-thinkcoffee}
+      
+      # Cache Config
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devredispassword}
+      REDIS_DB: 0
+      
+      # JWT Config
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-must-be-changed-in-production}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:-dev-refresh-secret-must-be-changed-in-production}
+      JWT_EXPIRES_IN: 7d
+      REFRESH_TOKEN_EXPIRES_IN: 30d
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - /app/node_modules
+      - ./logs:/app/logs
+    
+    networks:
+      - thinkcoffee-network
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: thinkcoffee-postgres
+    
+    environment:
+      POSTGRES_DB: ${DB_NAME:-thinkcoffee}
+      POSTGRES_USER: ${DB_USER:-thinkcoffee_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql
+    
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    
+    networks:
+      - thinkcoffee-network
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-thinkcoffee_user}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: thinkcoffee-redis
+    
+    command: |
+      redis-server \
+        --requirepass ${REDIS_PASSWORD:-devredispassword} \
+        --appendonly yes \
+        --appendfsync everysec
+    
+    volumes:
+      - redis_data:/data
+    
+    ports:
+      - "6379:6379"
+    
+    networks:
+      - thinkcoffee-network
+    
+    restart: unless-stopped
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  thinkcoffee-network:
+    driver: bridge

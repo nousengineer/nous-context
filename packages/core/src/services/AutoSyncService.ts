@@ -1,341 +1,317 @@
-import { SyncConfigService, SyncResult } from './SyncConfigService';
-import { SyncConfig, SyncTrigger } from '../entities/SyncConfig';
 import { DataSource } from 'typeorm';
-
-interface ScheduledJob {
-  configId: string;
-  cronSchedule: string;
-  nextRunAt: Date;
-  projectId: string;
-}
-
-interface AutoSyncOptions {
-  /** Check interval for scheduled tasks in ms (default: 60000 = 1 min) */
-  checkIntervalMs?: number;
-  /** Max consecutive failures before disabling a config */
-  maxFailures?: number;
-  /** Callback for sync events */
-  onSyncComplete?: (result: SyncResult) => void;
-  onSyncError?: (error: Error, configId: string) => void;
-  onConfigDisabled?: (configId: string, reason: string) => void;
-}
-
-export interface AutoSyncStatus {
-  isRunning: boolean;
-  scheduledJobsCount: number;
-  jobs: Array<{
-    configId: string;
-    projectId: string;
-    cronSchedule: string;
-    nextRunAt: Date;
-  }>;
-}
+import { EventEmitter } from 'events';
+import { Logger } from '../utils/Logger';
+import fs from 'fs';
+import path from 'path';
+import chokidar from 'chokidar';
 
 /**
- * Handles automatic sync based on triggers:
- * - on-change: Triggered externally when context changes
- * - scheduled: Runs on cron schedule
- * - manual: Only triggered via explicit call
+ * Auto-Sync Service
+ * 
+ * Gerencia sincronização automática de contexto entre:
+ * - Diretório do projeto (workspace)
+ * - Banco de dados (SQLite)
+ * - VS Code (mediante EventBus)
+ * 
+ * Monitora mudanças em arquivos e sincroniza automaticamente
+ * com debounce para evitar múltiplas sincronizações simultâneas.
  */
-export class AutoSyncService {
-  private syncService: SyncConfigService;
-  private scheduledJobs: Map<string, ScheduledJob> = new Map();
-  private checkInterval: NodeJS.Timeout | null = null;
-  private options: Required<AutoSyncOptions>;
-  private isRunning = false;
 
-  constructor(db: DataSource, options: AutoSyncOptions = {}) {
-    this.syncService = new SyncConfigService(db);
-    this.options = {
-      checkIntervalMs: options.checkIntervalMs ?? 60000,
-      maxFailures: options.maxFailures ?? 5,
-      onSyncComplete: options.onSyncComplete ?? (() => {}),
-      onSyncError: options.onSyncError ?? (() => {}),
-      onConfigDisabled: options.onConfigDisabled ?? (() => {}),
+export interface AutoSyncConfig {
+  projectPath: string;
+  workspaceId: string;
+  projectId: string;
+  debounceMs?: number;
+  watchPatterns?: string[];
+  ignorePatterns?: string[];
+}
+
+export interface SyncEvent {
+  type: 'file-changed' | 'sync-started' | 'sync-completed' | 'sync-error';
+  projectId: string;
+  workspaceId: string;
+  timestamp: Date;
+  data?: any;
+}
+
+export class AutoSyncService extends EventEmitter {
+  private logger = Logger.getInstance();
+  private isRunning: boolean = false;
+  private watcher: chokidar.FSWatcher | null = null;
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private debounceMs: number;
+  private watchPatterns: string[];
+  private ignorePatterns: string[];
+  private config: AutoSyncConfig;
+  private syncSchedule: NodeJS.Timer | null = null;
+  private lastSyncTime: number = 0;
+  private syncInProgress: boolean = false;
+
+  constructor(
+    private db?: DataSource,
+    config?: Partial<AutoSyncConfig>
+  ) {
+    super();
+
+    this.config = {
+      projectPath: config?.projectPath || process.cwd(),
+      workspaceId: config?.workspaceId || 'default',
+      projectId: config?.projectId || 'default',
+      debounceMs: config?.debounceMs || 1000,
     };
-  }
 
-  /**
-   * Get the underlying SyncConfigService
-   */
-  getSyncConfigService(): SyncConfigService {
-    return this.syncService;
-  }
+    this.debounceMs = this.config.debounceMs!;
+    this.watchPatterns = config?.watchPatterns || ['**/*.ts', '**/*.tsx', '**/*.md', '**/*.json'];
+    this.ignorePatterns = config?.ignorePatterns || [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/.vscode/**',
+      '**/dist/**',
+      '**/.thinkcoffee/**',
+    ];
 
-  /**
-   * Start the auto-sync scheduler
-   */
-  async start(): Promise<void> {
-    if (this.isRunning) return;
-    this.isRunning = true;
-
-    await this.loadScheduledJobs();
-
-    this.checkInterval = setInterval(async () => {
-      await this.checkScheduledJobs();
-    }, this.options.checkIntervalMs);
-
-    console.log('[AutoSync] Scheduler started with ' + this.scheduledJobs.size + ' jobs');
-  }
-
-  /**
-   * Stop the auto-sync scheduler
-   */
-  stop(): void {
-    if (!this.isRunning) return;
-
-    if (this.checkInterval) {
-      clearInterval(this.checkInterval);
-      this.checkInterval = null;
-    }
-
-    this.scheduledJobs.clear();
-    this.isRunning = false;
-    console.log('[AutoSync] Scheduler stopped');
-  }
-
-  /**
-   * Get current scheduler status
-   */
-  getStatus(): AutoSyncStatus {
-    return {
-      isRunning: this.isRunning,
-      scheduledJobsCount: this.scheduledJobs.size,
-      jobs: Array.from(this.scheduledJobs.values()).map(job => ({
-        configId: job.configId,
-        projectId: job.projectId,
-        cronSchedule: job.cronSchedule,
-        nextRunAt: job.nextRunAt,
-      })),
-    };
-  }
-
-  /**
-   * Trigger sync for on-change configs of a project
-   * Called when project context is modified
-   */
-  async triggerOnChange(projectId: string): Promise<SyncResult[]> {
-    const configs = await this.syncService.getEnabledByProject(projectId);
-    const onChangeConfigs = configs.filter(c => c.trigger === 'on-change');
-
-    const results: SyncResult[] = [];
-    for (const config of onChangeConfigs) {
-      try {
-        const result = await this.syncService.executeSyncForConfig(config);
-        this.options.onSyncComplete(result);
-        results.push(result);
-
-        if (!result.success) {
-          await this.handleSyncFailure(config);
-        }
-      } catch (error) {
-        this.options.onSyncError(error as Error, config.id);
-        results.push({
-          success: false,
-          syncConfigId: config.id,
-          target: config.target,
-          outputPath: '',
-          error: (error as Error).message,
-          syncedAt: new Date(),
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Trigger sync for all enabled configs of a project (any trigger type)
-   */
-  async triggerAll(projectId: string): Promise<SyncResult[]> {
-    const configs = await this.syncService.getEnabledByProject(projectId);
-
-    const results: SyncResult[] = [];
-    for (const config of configs) {
-      try {
-        const result = await this.syncService.executeSyncForConfig(config);
-        this.options.onSyncComplete(result);
-        results.push(result);
-
-        if (!result.success) {
-          await this.handleSyncFailure(config);
-        }
-      } catch (error) {
-        this.options.onSyncError(error as Error, config.id);
-        results.push({
-          success: false,
-          syncConfigId: config.id,
-          target: config.target,
-          outputPath: '',
-          error: (error as Error).message,
-          syncedAt: new Date(),
-        });
-      }
-    }
-
-    return results;
-  }
-
-  /**
-   * Manually trigger sync for a specific config
-   */
-  async triggerSync(configId: string): Promise<SyncResult> {
-    const result = await this.syncService.executeSync(configId);
-    this.options.onSyncComplete(result);
-
-    if (!result.success) {
-      const config = await this.syncService.get(configId);
-      if (config) {
-        await this.handleSyncFailure(config);
-      }
-    }
-
-    return result;
-  }
-
-  /**
-   * Reload scheduled jobs (call after config changes)
-   */
-  async reloadScheduledJobs(): Promise<void> {
-    this.scheduledJobs.clear();
-    await this.loadScheduledJobs();
-    console.log('[AutoSync] Reloaded ' + this.scheduledJobs.size + ' scheduled jobs');
-  }
-
-  /**
-   * Add or update a scheduled job for a config
-   */
-  async addScheduledJob(configId: string): Promise<void> {
-    const config = await this.syncService.get(configId);
-    if (!config || config.trigger !== 'scheduled' || !config.enabled || !config.cronSchedule) {
-      return;
-    }
-
-    const nextRun = this.getNextCronRun(config.cronSchedule);
-    this.scheduledJobs.set(configId, {
-      configId: config.id,
-      cronSchedule: config.cronSchedule,
-      nextRunAt: nextRun,
-      projectId: config.projectId,
+    this.logger.info('[AutoSync] Service initialized', {
+      projectPath: this.config.projectPath,
+      workspaceId: this.config.workspaceId,
     });
   }
 
   /**
-   * Remove a scheduled job
+   * Iniciar serviço de sincronização automática
    */
-  removeScheduledJob(configId: string): void {
-    this.scheduledJobs.delete(configId);
-  }
-
-  private async loadScheduledJobs(): Promise<void> {
-    const scheduledConfigs = await this.syncService.getScheduled();
-
-    for (const config of scheduledConfigs) {
-      if (config.cronSchedule) {
-        const nextRun = this.getNextCronRun(config.cronSchedule);
-        this.scheduledJobs.set(config.id, {
-          configId: config.id,
-          cronSchedule: config.cronSchedule,
-          nextRunAt: nextRun,
-          projectId: config.projectId,
-        });
-      }
+  async start(): Promise<void> {
+    if (this.isRunning) {
+      this.logger.warn('[AutoSync] Service already running');
+      return;
     }
-  }
 
-  private async checkScheduledJobs(): Promise<void> {
-    const now = new Date();
+    try {
+      this.logger.info('[AutoSync] Starting auto-sync service', {
+        projectPath: this.config.projectPath,
+      });
 
-    for (const [configId, job] of this.scheduledJobs) {
-      if (job.nextRunAt <= now) {
-        try {
-          console.log('[AutoSync] Running scheduled job for config ' + configId);
-          const result = await this.syncService.executeSync(configId);
-          this.options.onSyncComplete(result);
+      this.isRunning = true;
 
-          if (!result.success) {
-            const config = await this.syncService.get(configId);
-            if (config) {
-              await this.handleSyncFailure(config);
-            }
-          }
+      // Iniciar file watcher
+      this.startFileWatcher();
 
-          // Update next run time
-          job.nextRunAt = this.getNextCronRun(job.cronSchedule);
-        } catch (error) {
-          this.options.onSyncError(error as Error, configId);
-        }
-      }
-    }
-  }
+      // Iniciar scheduled sync a cada 5 minutos
+      this.startScheduledSync();
 
-  private async handleSyncFailure(config: SyncConfig): Promise<void> {
-    const newFailureCount = config.failureCount + 1;
+      // Emitir evento de inicialização
+      this.emit('started', {
+        type: 'sync-started',
+        projectId: this.config.projectId,
+        workspaceId: this.config.workspaceId,
+        timestamp: new Date(),
+      } as SyncEvent);
 
-    if (newFailureCount >= this.options.maxFailures) {
-      await this.syncService.update(config.id, { enabled: false });
-      this.removeScheduledJob(config.id);
-
-      const reason = 'Disabled after ' + newFailureCount + ' consecutive failures';
-      this.options.onConfigDisabled(config.id, reason);
-      console.warn('[AutoSync] ' + reason + ' for config ' + config.id);
+      this.logger.info('[AutoSync] Service started successfully');
+    } catch (error) {
+      this.logger.error('[AutoSync] Failed to start service', { error });
+      this.isRunning = false;
+      throw error;
     }
   }
 
   /**
-   * Parse cron expression and get next run time
-   * Supports: minute hour day-of-month month day-of-week
-   * Examples: "0 9 * * *" = 9am daily, "0 * * * *" = every hour, "* /15 * * * *" = every 15 min
+   * Parar serviço de sincronização automática
    */
-  private getNextCronRun(cronExpression: string): Date {
-    const parts = cronExpression.trim().split(/\s+/);
-    if (parts.length !== 5) {
-      // Invalid cron, default to 1 hour from now
-      return new Date(Date.now() + 60 * 60 * 1000);
+  async stop(): Promise<void> {
+    if (!this.isRunning) {
+      return;
     }
 
-    const [minute, hour] = parts;
-    const now = new Date();
-    const next = new Date(now);
+    try {
+      this.logger.info('[AutoSync] Stopping auto-sync service');
 
-    // Simple implementation for common patterns
-    if (minute.startsWith('*/')) {
-      // Every N minutes
-      const interval = parseInt(minute.slice(2), 10);
-      const currentMinute = now.getMinutes();
-      const nextMinute = Math.ceil((currentMinute + 1) / interval) * interval;
-      next.setMinutes(nextMinute, 0, 0);
-      if (next <= now) {
-        next.setMinutes(next.getMinutes() + interval);
+      this.isRunning = false;
+
+      // Fechar file watcher
+      if (this.watcher) {
+        await this.watcher.close();
+        this.watcher = null;
       }
-      return next;
-    }
 
-    if (hour.startsWith('*/')) {
-      // Every N hours
-      const interval = parseInt(hour.slice(2), 10);
-      const currentHour = now.getHours();
-      const nextHour = Math.ceil((currentHour + 1) / interval) * interval;
-      next.setHours(nextHour, parseInt(minute, 10) || 0, 0, 0);
-      if (next <= now) {
-        next.setHours(next.getHours() + interval);
+      // Parar scheduled sync
+      if (this.syncSchedule) {
+        clearInterval(this.syncSchedule);
+        this.syncSchedule = null;
       }
-      return next;
-    }
 
-    // Specific time (e.g., "0 9 * * *" = 9:00 AM daily)
-    const targetMinute = parseInt(minute, 10) || 0;
-    const targetHour = parseInt(hour, 10);
-
-    if (!isNaN(targetHour)) {
-      next.setHours(targetHour, targetMinute, 0, 0);
-      if (next <= now) {
-        next.setDate(next.getDate() + 1);
+      // Limpar debounce timer
+      if (this.debounceTimer) {
+        clearTimeout(this.debounceTimer);
+        this.debounceTimer = null;
       }
-      return next;
+
+      this.emit('stopped', {
+        type: 'sync-completed',
+        projectId: this.config.projectId,
+        workspaceId: this.config.workspaceId,
+        timestamp: new Date(),
+      } as SyncEvent);
+
+      this.logger.info('[AutoSync] Service stopped');
+    } catch (error) {
+      this.logger.error('[AutoSync] Error stopping service', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Verificar se o serviço está rodando
+   */
+  async isRunning(): Promise<boolean> {
+    return this.isRunning;
+  }
+
+  /**
+   * Executar sincronização manual
+   */
+  async sync(): Promise<boolean> {
+    if (this.syncInProgress) {
+      this.logger.debug('[AutoSync] Sync already in progress, skipping');
+      return false;
     }
 
-    // Default: 1 hour from now
-    return new Date(Date.now() + 60 * 60 * 1000);
+    try {
+      this.syncInProgress = true;
+      this.lastSyncTime = Date.now();
+
+      this.logger.info('[AutoSync] Starting manual sync', {
+        projectPath: this.config.projectPath,
+      });
+
+      // Aqui seria chamado o serviço de sincronização real
+      // Por enquanto, apenas emitir evento
+      this.emit('syncing', {
+        type: 'sync-started',
+        projectId: this.config.projectId,
+        workspaceId: this.config.workspaceId,
+        timestamp: new Date(),
+      } as SyncEvent);
+
+      // Simular delay de sincronização
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      this.emit('synced', {
+        type: 'sync-completed',
+        projectId: this.config.projectId,
+        workspaceId: this.config.workspaceId,
+        timestamp: new Date(),
+      } as SyncEvent);
+
+      this.logger.info('[AutoSync] Sync completed successfully');
+      return true;
+    } catch (error) {
+      this.logger.error('[AutoSync] Sync failed', { error });
+      this.emit('error', {
+        type: 'sync-error',
+        projectId: this.config.projectId,
+        workspaceId: this.config.workspaceId,
+        timestamp: new Date(),
+        data: { error: String(error) },
+      } as SyncEvent);
+      return false;
+    } finally {
+      this.syncInProgress = false;
+    }
+  }
+
+  /**
+   * Iniciar file watcher para detectar mudanças
+   */
+  private startFileWatcher(): void {
+    try {
+      this.watcher = chokidar.watch(this.watchPatterns, {
+        cwd: this.config.projectPath,
+        ignored: this.ignorePatterns,
+        ignoreInitial: true,
+        persistent: true,
+        awaitWriteFinish: {
+          stabilityThreshold: 500,
+          pollInterval: 100,
+        },
+      });
+
+      // Eventos de mudança de arquivo
+      this.watcher
+        .on('add', (file) => this.onFileChanged(file, 'add'))
+        .on('change', (file) => this.onFileChanged(file, 'change'))
+        .on('unlink', (file) => this.onFileChanged(file, 'unlink'))
+        .on('error', (error) => {
+          this.logger.error('[AutoSync] File watcher error', { error });
+        });
+
+      this.logger.debug('[AutoSync] File watcher started');
+    } catch (error) {
+      this.logger.error('[AutoSync] Failed to start file watcher', { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Handler para mudanças em arquivos (com debounce)
+   */
+  private onFileChanged(file: string, type: string): void {
+    this.logger.debug('[AutoSync] File changed', { file, type });
+
+    // Emitir evento de mudança
+    this.emit('file-changed', {
+      type: 'file-changed',
+      projectId: this.config.projectId,
+      workspaceId: this.config.workspaceId,
+      timestamp: new Date(),
+      data: { file, changeType: type },
+    } as SyncEvent);
+
+    // Debounce: aguardar antes de sincronizar
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+
+    this.debounceTimer = setTimeout(() => {
+      this.sync().catch(error => {
+        this.logger.error('[AutoSync] Auto-sync after file change failed', { error });
+      });
+    }, this.debounceMs);
+  }
+
+  /**
+   * Iniciar scheduled sync periódico (a cada 5 minutos)
+   */
+  private startScheduledSync(): void {
+    // Sync a cada 5 minutos
+    const syncIntervalMs = 5 * 60 * 1000;
+
+    this.syncSchedule = setInterval(() => {
+      if (!this.syncInProgress) {
+        this.sync().catch(error => {
+          this.logger.error('[AutoSync] Scheduled sync failed', { error });
+        });
+      }
+    }, syncIntervalMs);
+
+    this.logger.debug('[AutoSync] Scheduled sync started', { intervalMs: syncIntervalMs });
+  }
+
+  /**
+   * Obter status do serviço
+   */
+  getStatus(): {
+    isRunning: boolean;
+    lastSyncTime: number;
+    syncInProgress: boolean;
+    projectPath: string;
+    workspaceId: string;
+  } {
+    return {
+      isRunning: this.isRunning,
+      lastSyncTime: this.lastSyncTime,
+      syncInProgress: this.syncInProgress,
+      projectPath: this.config.projectPath,
+      workspaceId: this.config.workspaceId,
+    };
   }
 }

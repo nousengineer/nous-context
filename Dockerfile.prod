@@ -1,0 +1,50 @@
+# Multi-stage production Dockerfile for ThinkCoffee API
+
+# Stage 1: Builder
+FROM node:20-alpine AS builder
+
+WORKDIR /build
+
+# Install dependencies
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN npm install -g pnpm && pnpm install --frozen-lockfile
+
+# Copy source
+COPY . .
+
+# Build all packages
+RUN pnpm build
+
+# Stage 2: Runtime
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install only production dependencies
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN npm install -g pnpm && \
+    pnpm install --frozen-lockfile --prod && \
+    pnpm prune --prod
+
+# Copy built artifacts
+COPY --from=builder /build/packages/core/dist ./packages/core/dist
+COPY --from=builder /build/packages/mcp-server/dist ./packages/mcp-server/dist
+COPY --from=builder /build/packages/cli/dist ./packages/cli/dist
+
+# Copy configuration
+COPY --from=builder /build/ormconfig.json ./
+COPY --from=builder /build/tsconfig.base.json ./
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+# Environment
+ENV NODE_ENV=production
+ENV LOG_LEVEL=info
+
+# Expose ports
+EXPOSE 3000 3001
+
+# Start MCP server
+CMD ["node", "packages/mcp-server/dist/server.js"]

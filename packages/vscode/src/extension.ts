@@ -1,744 +1,1184 @@
 import * as vscode from 'vscode';
+import { AutonomousRuntime } from './agents/AutonomousRuntime';
+import type { WorkflowDefinition } from './agents/AutonomousRuntime';
+import { OrchestratorClient, OrchestratorHttpError } from './utils/orchestratorClient';
 import {
-  getDatabase,
-  ProjectService,
-  ContextService,
-  DecisionService,
-  exportProject,
-  getExportFilename,
-  ExportFormat,
-  ChatService,
-  PipelineService,
-  AGENT_META,
-  loadAgentConfig,
-  saveAgentConfig,
-  setAgentModel,
-  applyQualityPreset,
-  QUALITY_PRESETS,
-  getModelForAgent,
-} from '@thinkcoffee/core';
-import type { Project, AgentRole, QualityPreset } from '@thinkcoffee/core';
-import { ChatViewProvider } from './chat/ChatViewProvider';
-import { ChatHistoryView } from './chat/ChatHistoryView';
-import { AgentService } from './agents/AgentService';
-import { discoverModels } from './agents/ModelRegistry';
-import { SafetyNetPanel } from './views/SafetyNetPanel';
-import { SafetyNetIntegration, DryRunManager } from './utils';
-import { DryRunStatusBar } from './utils/DryRunStatusBar';
-import fs from 'fs';
-import path from 'path';
-import { getPipelineChatHistoryService } from './chat/PipelineChatHistoryService';
-import { ChatPanel } from './chat/ChatPanel';
+  appendChatMessage,
+  createPipeline,
+  getActivePipeline,
+  approveCurrentPhase,
+  rejectCurrentPhase,
+  formatPipelineStatus,
+} from './utils/pmServices';
+import { ChatSidebarProvider } from './views';
 
-let projectService: ProjectService;
-let contextService: ContextService;
-let decisionService: DecisionService;
-let pipelineService: PipelineService;
-let agentService: AgentService;
-let safetyNetIntegration: SafetyNetIntegration;
-let dryRunStatusBar: DryRunStatusBar;
-
-/** The project bound to the current workspace (auto-created on activate) */
-let activeProject: Project | null = null;
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-/** Get the workspace-bound project. Falls back to pickProject if no workspace. */
-async function getProject(): Promise<Project | undefined> {
-  if (activeProject) {
-    // Refresh to get latest relations
-    const fresh = await projectService.get(activeProject.id);
-    if (fresh) return fresh;
-  }
-  return pickProject();
+let runtime: AutonomousRuntime | undefined;
+let pipelineRunning = false;
+let pipelineCurrentAgent = '';
+const RUN_ID_KEY = 'thinkcoffee.currentOrchestratorRunId';
+const PLAN_ID_KEY = 'thinkcoffee.currentOrchestratorPlanId';
+const WORKSPACE_ID_KEY = 'thinkcoffee.currentOrchestratorWorkspaceId';
+type PmDelegateMode = 'create-workflow' | 'resume-run' | 'pause-run' | 'show-run' | 'toggle-dry-run' | 'safety-scan' | 'stop-runs';
+interface PmDelegatedCommand {
+  command: string;
+  goal: string;
+  ask?: string;
+  delegate?: PmDelegateMode;
 }
 
-async function pickProject(): Promise<Project | undefined> {
-  const projects = await projectService.list();
-  if (!projects.length) {
-    vscode.window.showWarningMessage('No ThinkCoffee projects yet. Create one first.');
-    return;
-  }
-  const selected = await vscode.window.showQuickPick(
-    projects.map(p => ({ label: p.name, description: p.id, detail: p.description || '', project: p })),
-    { placeHolder: 'Select a project' }
-  );
-  return selected ? await projectService.get(selected.description!) || undefined : undefined;
+interface ChatImageAttachment {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
 }
 
-function getWorkspaceRoot(): string | undefined {
-  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+interface ChatAskPayload {
+  type?: string;
+  prompt?: string;
+  includeActiveEditor?: boolean;
+  images?: ChatImageAttachment[];
 }
 
-/** Get relative path of a file from workspace root */
-function relPath(absPath: string): string {
-  const root = getWorkspaceRoot();
-  if (!root) return absPath;
-  return path.relative(root, absPath).replace(/\\/g, '/');
-}
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  console.log('[extension] Activating ThinkCoffee extension');
+  runtime = new AutonomousRuntime(context);
+  const out = runtime.getOutput();
+  out.appendLine('[ThinkCoffee] Extension activated');
+  console.log('[extension] Runtime created:', !!runtime);
+  const chatProvider = new ChatSidebarProvider();
+  console.log('[extension] ChatProvider created');
 
-export async function activate(context: vscode.ExtensionContext) {
-  try {
-    await _activate(context);
-  } catch (err: any) {
-    // Still register the webview provider so VS Code stops showing "Loading..."
-    const errMsg = err?.message || String(err);
-    console.error('[ThinkCoffee] Activation failed:', errMsg);
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider('thinkcoffee.chat', {
-        resolveWebviewView(view: vscode.WebviewView) {
-          view.webview.html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<style>body{font-family:system-ui;padding:16px;color:#ccc;background:#1e1e1e}
-h3{color:#f87171;margin:0 0 8px}p{font-size:13px;line-height:1.5}
-code{background:#2d2d2d;padding:2px 6px;border-radius:3px;font-size:12px}
-button{margin-top:12px;padding:6px 14px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer}
-</style></head><body>
-<h3>ThinkCoffee - Erro na inicializacao</h3>
-<p>A extensao nao conseguiu inicializar:</p>
-<p><code>${errMsg.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code></p>
-<p>Tente recarregar a janela (<code>Ctrl+Shift+P</code> → <code>Reload Window</code>).</p>
-<button onclick="const vscode=acquireVsCodeApi();vscode.postMessage({command:'reload'})">Recarregar</button>
-</body></html>`;
-          view.webview.onDidReceiveMessage(msg => {
-            if (msg.command === 'reload') {
-              vscode.commands.executeCommand('workbench.action.reloadWindow');
-            }
-          });
-        },
-      })
-    );
-    vscode.window.showErrorMessage(`ThinkCoffee: ${errMsg}`);
-  }
-}
-
-async function _activate(context: vscode.ExtensionContext) {
-  const db = await getDatabase();
-  projectService = new ProjectService(db);
-  contextService = new ContextService(db);
-  decisionService = new DecisionService(db);
-  pipelineService = new PipelineService();
-
-  // Pre-warm model discovery cache (non-blocking)
-  discoverModels().catch(() => {});
-
-  // ─── Auto-bind project to workspace ────────────────────────
-  const wsRoot = getWorkspaceRoot();
-  if (wsRoot) {
-    let project = await projectService.findByWorkspace(wsRoot);
-    if (!project) {
-      // Auto-create a project for this workspace
-      const name = path.basename(wsRoot);
-      project = await projectService.create({ name, description: `Project for ${name}` });
-      await projectService.linkWorkspace(project.id, wsRoot);
-      project = await projectService.get(project.id) || project;
-    }
-    activeProject = project;
-
-    // Initialize Safety Net Integration
-    safetyNetIntegration = new SafetyNetIntegration(wsRoot);
-
-    // Run automatic cleanup on activation if enabled
-    const autoCleanup = vscode.workspace.getConfiguration('thinkcoffee.safetynet').get<boolean>('autoCleanup', true);
-    if (autoCleanup) {
-      // Get active pipeline IDs to protect from cleanup
-      const activePipelines = new Set<string>();
-      if (activeProject) {
-        const pipelinesForProject = pipelineService.list(activeProject.id);
-        for (const p of pipelinesForProject) {
-          if (p.status === 'active' || p.status === 'in-progress') {
-            activePipelines.add(p.id);
-          }
-        }
-      }
-      safetyNetIntegration.runCleanup(activePipelines).catch(console.error);
-    }
-  }
-
-  // Status bar — show active project
-  const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  statusBar.command = 'thinkcoffee.openChat';
-  if (activeProject) {
-    statusBar.text = `$(coffee) ${activeProject.name}`;
-    statusBar.tooltip = `ThinkCoffee: ${activeProject.name} (${activeProject.id})`;
-  } else {
-    statusBar.text = '$(coffee) ThinkCoffee';
-    statusBar.tooltip = 'No workspace project';
-  }
-  statusBar.show();
-  context.subscriptions.push(statusBar);
-
-  // Dry-Run Status Bar
-  if (safetyNetIntegration) {
-    dryRunStatusBar = new DryRunStatusBar(safetyNetIntegration.dryRunManager);
-    context.subscriptions.push(dryRunStatusBar);
-  }
-
-  // ─── Chat Sidebar (replaces tree views) ─────────────────────
-  const chat = new ChatService('default');
-  const chatProvider = new ChatViewProvider(
-    context.extensionUri,
-    chat,
-    pipelineService,
-    contextService,
-    decisionService,
-    () => activeProject ? { id: activeProject.id, name: activeProject.name } : null,
-  );
+  console.log('[extension] Registering webview view provider');
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, chatProvider, {
+    vscode.window.registerWebviewViewProvider(ChatSidebarProvider.viewType, chatProvider, {
       webviewOptions: { retainContextWhenHidden: true },
-    })
+    }),
   );
+  console.log('[extension] Webview view provider registered');
 
-  // --- Chat History View ---
-  const chatHistoryView = new ChatHistoryView();
-  vscode.window.createTreeView('thinkcoffee-history', { treeDataProvider: chatHistoryView });
-  context.subscriptions.push(
-    vscode.commands.registerCommand('thinkcoffee.history.refresh', () => chatHistoryView.refresh())
-  );
-
-  // ─── Agent Service ───────────────────────────────────────────
-  agentService = new AgentService(
-    () => chatProvider.getActiveChat(),
-    (pid) => chatProvider.getChatForPipeline(pid),
-    pipelineService,
-    contextService,
-    decisionService,
-    () => activeProject ? { id: activeProject.id, name: activeProject.name } : null,
-  );
-  chatProvider.setAgentService(agentService);
-  context.subscriptions.push({ dispose: () => agentService.dispose() });
-
-  // ─── Resume incomplete pipelines after a short delay ────────
+  // Load and display pipeline/run history
   setTimeout(() => {
-    chatProvider.resumeIncomplete();
-  }, 3000);
+    console.log('[extension] Loading history');
+    const history = runtime?.getMemory() || [];
+    if (history.length > 0) {
+      const summary = history
+        .slice(0, 5)
+        .map(item => `${item.at}: ${item.summary}`)
+        .join('\n');
+      chatProvider.postStatus(`PM history (last 5): \n${summary}`);
+      out.appendLine(`[pm:memory] Loaded ${history.length} run summaries`);
+    } else {
+      chatProvider.postStatus('PM ready. No previous runs in memory.');
+    }
+  }, 500);
 
-  // Commands
-  context.subscriptions.push(
+  const register = (command: string, handler: (...args: unknown[]) => unknown) => {
+    console.log(`[extension] Registering command: ${command}`);
+    context.subscriptions.push(vscode.commands.registerCommand(command, handler));
+  };
 
-    // ─── Create Project ──────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.createProject', async () => {
-      const root = getWorkspaceRoot();
-      const defaultName = root ? path.basename(root) : '';
-      const name = await vscode.window.showInputBox({ prompt: 'Project name', value: defaultName });
-      if (!name) return;
-      const description = await vscode.window.showInputBox({ prompt: 'Project description (optional)' });
-      const project = await projectService.create({ name, description: description || undefined });
-      // Link to current workspace
-      if (root) {
-        await projectService.linkWorkspace(project.id, root);
-        activeProject = await projectService.get(project.id) || project;
-      }
-      vscode.window.showInformationMessage(`Project created: ${project.name} (linked to workspace)`);
-      chatProvider.refresh();
-    }),
+  register('thinkcoffee.chat.ask', async (promptArg?: unknown) => {
+    console.log('[thinkcoffee.chat.ask] Command received');
 
-    // ─── Add Context ─────────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.addContext', async () => {
-      const project = await getProject();
-      if (!project) return;
+    if (!runtime) {
+      out.appendLine('[thinkcoffee.chat.ask] Runtime not available');
+      chatProvider.postError('PM runtime not available');
+      return;
+    }
 
-      const key = await vscode.window.showInputBox({ prompt: 'Context key (short label)' });
-      if (!key) return;
+    const payload = normalizeChatPayload(promptArg);
+    out.appendLine(`[thinkcoffee.chat.ask] prompt="${payload.prompt.slice(0, 60)}…" editor=${payload.includeActiveEditor} images=${payload.images.length}`);
 
-      const value = await vscode.window.showInputBox({ prompt: 'Context value' });
-      if (!value) return;
+    if (!payload.prompt && !payload.includeActiveEditor && payload.images.length === 0) {
+      return;
+    }
 
-      const category = await vscode.window.showQuickPick(
-        ['architecture', 'requirements', 'dependencies', 'standards', 'general'],
-        { placeHolder: 'Category' }
+    // Guard: if a pipeline/agent is already executing, inform the user
+    if (pipelineRunning) {
+      chatProvider.postAssistant(
+        `⏳ **Agents are working right now** (current: ${pipelineCurrentAgent || 'preparing'})\n\n` +
+        `Wait for the current execution to finish. You'll see results here as each agent completes.`,
       );
-      if (!category) return;
+      return;
+    }
 
-      await contextService.create({ projectId: project.id, key, value, category });
-      vscode.window.showInformationMessage(`Context added: [${category}] ${key}`);
-      chatProvider.refresh();
-    }),
+    chatProvider.postStatus('PM is analyzing request…');
 
-    // ─── Add File as Context ─────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.addFileAsContext', async (uri?: vscode.Uri) => {
-      const fileUri = uri || vscode.window.activeTextEditor?.document.uri;
-      if (!fileUri) {
-        vscode.window.showWarningMessage('No file selected or open.');
-        return;
+    const editorContext = payload.includeActiveEditor ? buildActiveEditorContext() : undefined;
+    const imageContext = payload.images.length > 0
+      ? payload.images.map((img, i) => `Image ${i + 1}: ${img.name} (${img.mimeType})\n${img.dataUrl.slice(0, 8000)}`).join('\n\n')
+      : undefined;
+
+    // Build the full user prompt including any attachments
+    const fullPrompt = [
+      payload.prompt || '',
+      editorContext ? `\n[Active editor]\n${editorContext}` : '',
+      imageContext ? `\n[Attached images]\n${imageContext}` : '',
+    ].join('').trim();
+
+    // Derive the project ID from the workspace folder name (same logic as getWorkspaceId())
+    const projectId = (await getWorkspaceId()) ?? `thinkcoffee-${process.pid}`;
+    const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+
+    // Record the user message in the shared ChatService JSONL channel
+    appendChatMessage(projectId, 'programmer', 'request', fullPrompt);
+
+    // ── @mention detection: call agents directly ──
+    const VALID_AGENTS = [
+      'architect', 'backend', 'frontend', 'devops', 'qa',
+      'code-review', 'organizer', 'git', 'dead-code', 'troubleshooter',
+    ];
+    const mentionRegex = /@([\w-]+)/g;
+    const mentionedAgents: string[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = mentionRegex.exec(fullPrompt)) !== null) {
+      const agent = match[1].toLowerCase();
+      if (VALID_AGENTS.includes(agent) && !mentionedAgents.includes(agent)) {
+        mentionedAgents.push(agent);
       }
+    }
 
-      const project = await getProject();
-      if (!project) return;
+    if (mentionedAgents.length > 0) {
+      // Direct @mention flow: PM identifies agents and routes tasks
+      const taskText = fullPrompt.replace(/@[\w-]+/g, '').trim();
+      const agentLabels = mentionedAgents.map(a => `@${a}`).join(', ');
 
-      const doc = await vscode.workspace.openTextDocument(fileUri);
-      const content = doc.getText();
-      const rel = relPath(fileUri.fsPath);
-      const lang = doc.languageId;
+      out.appendLine(`[pm:chat] @mention detected: ${agentLabels} task="${taskText.slice(0, 80)}"`);
 
-      const key = await vscode.window.showInputBox({
-        prompt: 'Context key',
-        value: `file:${rel}`,
+      // PM analyses and assigns tasks to each mentioned agent
+      chatProvider.postStatus(`PM routing task to ${agentLabels}…`);
+
+      const pmAssignment = await runtime.runLongTask('ThinkCoffee PM', async (_progress, _token) => {
+        const assignPrompt = `The user mentioned specific agents: ${agentLabels}
+User request: "${taskText}"
+
+For each mentioned agent, write a specific task description based on the user's request.
+Respond ONLY with a valid JSON object (no markdown fences):
+{
+  "summary": "Brief explanation of what you understood from the request",
+  "assignments": {
+    "${mentionedAgents[0]}": "Specific task for this agent based on the request"${mentionedAgents.slice(1).map(a => `,\n    "${a}": "Specific task for this agent based on the request"`).join('')}
+  }
+}`;
+        // Use callAgent with PM role to get the assignment
+        const pmResult = await runtime!.callAgent('product-manager', assignPrompt, '', _token);
+        return pmResult.output;
       });
-      if (!key) return;
 
-      const category = await vscode.window.showQuickPick(
-        ['architecture', 'requirements', 'dependencies', 'standards', 'general'],
-        { placeHolder: 'Category' }
-      );
-      if (!category) return;
+      let assignments: Record<string, string> = {};
+      let pmSummary = '';
 
-      const value = `File: \`${rel}\` (${lang})\n\n\`\`\`${lang}\n${content}\n\`\`\``;
-      await contextService.create({ projectId: project.id, key, value, category, priority: 2 });
-      vscode.window.showInformationMessage(`File added as context: ${rel}`);
-      chatProvider.refresh();
-    }),
-
-    // ─── Add Selection as Context ────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.addSelectionAsContext', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor || editor.selection.isEmpty) {
-        vscode.window.showWarningMessage('No text selected.');
-        return;
+      if (pmAssignment) {
+        const jsonMatch = pmAssignment.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            pmSummary = typeof parsed.summary === 'string' ? parsed.summary : '';
+            if (parsed.assignments && typeof parsed.assignments === 'object') {
+              assignments = parsed.assignments;
+            }
+          } catch { /* fallthrough */ }
+        }
       }
 
-      const project = await getProject();
-      if (!project) return;
+      // Post PM's analysis
+      const analysisMsg = pmSummary
+        ? `**PM Analysis:** ${pmSummary}\n\nCalling ${agentLabels}…`
+        : `Calling ${agentLabels}…`;
+      chatProvider.postAssistant(analysisMsg);
+      appendChatMessage(projectId, 'pm', 'response', analysisMsg);
 
-      const selection = editor.document.getText(editor.selection);
-      const rel = relPath(editor.document.uri.fsPath);
-      const lang = editor.document.languageId;
-      const startLine = editor.selection.start.line + 1;
-      const endLine = editor.selection.end.line + 1;
-
-      const key = await vscode.window.showInputBox({
-        prompt: 'Context key',
-        value: `${rel}:L${startLine}-L${endLine}`,
+      // Execute each agent (parallel if multiple) with progress tracking
+      pipelineRunning = true;
+      const mentionStart = Date.now();
+      const editorCtx = editorContext ? `\n\n[Active editor context]\n${editorContext}` : '';
+      const agentPromises = mentionedAgents.map(async (agent) => {
+        const agentTask = assignments[agent] || taskText || `Execute ${agent} tasks`;
+        pipelineCurrentAgent = agent;
+        chatProvider.postStatus(`@${agent} working…`);
+        const result = await runtime!.callAgent(
+          agent as import('./agents/AutonomousRuntime').AgentRole,
+          agentTask,
+          `User request: ${taskText}${editorCtx}`,
+          undefined,
+          (hb) => chatProvider.postStatus(hb),
+        );
+        return result;
       });
-      if (!key) return;
 
-      const category = await vscode.window.showQuickPick(
-        ['architecture', 'requirements', 'dependencies', 'standards', 'general'],
-        { placeHolder: 'Category' }
-      );
-      if (!category) return;
+      const results = await Promise.all(agentPromises);
 
-      const value = `From \`${rel}\` lines ${startLine}-${endLine} (${lang}):\n\n\`\`\`${lang}\n${selection}\n\`\`\``;
-      await contextService.create({ projectId: project.id, key, value, category, priority: 2 });
-      vscode.window.showInformationMessage(`Selection added as context: ${key}`);
-      chatProvider.refresh();
-    }),
+      for (const r of results) {
+        const elapsed = Math.round((Date.now() - mentionStart) / 1000);
+        const icon = r.status === 'completed' ? '✅' : '❌';
+        const output = r.output.length > 3000
+          ? r.output.slice(0, 3000) + '\n…(truncated)'
+          : r.output;
+        chatProvider.postAssistant(`**@${r.agent}** ${icon} *(${r.model}, ${elapsed}s)*\n\n${output}`);
+        appendChatMessage(projectId, r.agent, 'response', r.output);
 
-    // ─── Add Workspace Structure as Context ──────────────────
-    vscode.commands.registerCommand('thinkcoffee.addStructureAsContext', async () => {
-      const root = getWorkspaceRoot();
-      if (!root) {
-        vscode.window.showErrorMessage('No workspace folder open.');
-        return;
-      }
-
-      const project = await getProject();
-      if (!project) return;
-
-      const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target']);
-      const lines: string[] = [path.basename(root) + '/'];
-
-      function tree(dir: string, prefix: string, depth: number) {
-        if (depth >= 4) return;
-        let entries: fs.Dirent[];
-        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-        entries.sort((a, b) => {
-          if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-        const filtered = entries.filter(e => !IGNORE.has(e.name) && !e.name.startsWith('.'));
-        for (let i = 0; i < filtered.length; i++) {
-          const entry = filtered[i];
-          const isLast = i === filtered.length - 1;
-          const connector = isLast ? '`-- ' : '|-- ';
-          const child = isLast ? '    ' : '|   ';
-          if (entry.isDirectory()) {
-            lines.push(`${prefix}${connector}${entry.name}/`);
-            tree(path.join(dir, entry.name), prefix + child, depth + 1);
-          } else {
-            lines.push(`${prefix}${connector}${entry.name}`);
+        // Handle delegations
+        if (r.delegateTo && r.delegateTo.length > 0) {
+          for (const delegated of r.delegateTo) {
+            chatProvider.postStatus(`@${r.agent} delegated to @${delegated}…`);
+            const delegateResult = await runtime!.callAgent(
+              delegated,
+              `${r.agent} delegated this work to you. Complete based on their output.`,
+              `[${r.agent} output]:\n${r.output.slice(0, 4000)}`,
+              undefined,
+              (hb) => chatProvider.postStatus(hb),
+            );
+            const dIcon = delegateResult.status === 'completed' ? '✅' : '❌';
+            const dOutput = delegateResult.output.length > 3000
+              ? delegateResult.output.slice(0, 3000) + '\n…(truncated)'
+              : delegateResult.output;
+            chatProvider.postAssistant(`**@${delegateResult.agent}** ${dIcon} *(delegated by @${r.agent})*\n\n${dOutput}`);
+            appendChatMessage(projectId, delegateResult.agent, 'response', delegateResult.output);
           }
         }
       }
-      tree(root, '', 0);
-      const structure = lines.join('\n');
 
-      await contextService.create({
-        projectId: project.id,
-        key: 'project-structure',
-        value: `Workspace directory tree:\n\n\`\`\`\n${structure}\n\`\`\``,
-        category: 'architecture',
-        priority: 3,
+      pipelineRunning = false;
+      pipelineCurrentAgent = '';
+      chatProvider.postStatus('Ready');
+      return; // Skip normal PM flow
+    }
+
+    // ── Normal PM flow (no @mentions) ──
+
+    // Read current pipeline state to give PM context
+    const activePipeline = getActivePipeline(projectId);
+    const pipelineStatus = activePipeline ? formatPipelineStatus(activePipeline) : undefined;
+
+    try {
+      const result = await runtime.runLongTask('ThinkCoffee PM', async (_progress, token) => {
+        return runtime!.pmChat(fullPrompt, { projectId, pipelineStatus }, token);
       });
-      vscode.window.showInformationMessage('Workspace structure added as context.');
-      chatProvider.refresh();
-    }),
 
-    // ─── Add Decision ────────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.addDecision', async () => {
-      const project = await getProject();
-      if (!project) return;
-
-      const title = await vscode.window.showInputBox({ prompt: 'Decision title' });
-      if (!title) return;
-
-      const description = await vscode.window.showInputBox({ prompt: 'What was decided and why?' });
-      if (!description) return;
-
-      await decisionService.create({ projectId: project.id, title, description });
-      vscode.window.showInformationMessage(`Decision recorded: ${title}`);
-      chatProvider.refresh();
-    }),
-
-    // ─── Sync Context ────────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.syncContext', async () => {
-      const project = await getProject();
-      if (!project) return;
-
-      const workspaceRoot = getWorkspaceRoot();
-      if (!workspaceRoot) {
-        vscode.window.showErrorMessage('No workspace folder open.');
+      if (!result) {
+        chatProvider.postError('PM request was canceled.');
         return;
       }
 
-      const formats: ExportFormat[] = ['copilot', 'claude', 'cursor'];
-      const written: string[] = [];
+      let replyText = result.message;
 
-      for (const format of formats) {
-        const content = exportProject(project, format);
-        const targetPath = path.join(workspaceRoot, getExportFilename(format, project.name));
-        const dir = path.dirname(targetPath);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(targetPath, content, 'utf-8');
-        written.push(getExportFilename(format, project.name));
-      }
+      // Execute the action the PM decided on
+      if (result.action === 'create-pipeline') {
+        const objective = result.objective || fullPrompt;
+        try {
+          const pipeline = createPipeline(projectId, objective, workspacePath);
+          const status = formatPipelineStatus(pipeline);
+          replyText += `\n\n${status}`;
+          out.appendLine(`[pm:chat] Pipeline created: ${pipeline.id}`);
 
-      vscode.window.showInformationMessage(`Synced: ${written.join(', ')}`);
-    }),
+          // Collect all agents from pipeline phases
+          const allAgents = pipeline.phases.flatMap(p => p.agents);
 
-    // ─── Export Context ──────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.exportContext', async () => {
-      const project = await getProject();
-      if (!project) return;
+          // Post the PM's initial message, then start orchestration
+          chatProvider.postAssistant(replyText);
+          appendChatMessage(projectId, 'pm', 'response', replyText);
 
-      const format = await vscode.window.showQuickPick(
-        ['markdown', 'json', 'plain', 'copilot', 'claude', 'cursor'],
-        { placeHolder: 'Export format' }
-      ) as ExportFormat | undefined;
-      if (!format) return;
+          // Execute the pipeline in the background with heartbeat
+          pipelineRunning = true;
+          pipelineCurrentAgent = 'planning';
+          const pipelineStart = Date.now();
+          const heartbeat = setInterval(() => {
+            const elapsed = Math.round((Date.now() - pipelineStart) / 1000);
+            chatProvider.postStatus(
+              `⏳ ${pipelineCurrentAgent} working… (${elapsed}s elapsed)`,
+            );
+          }, 8000);
 
-      const content = exportProject(project, format);
-      const doc = await vscode.workspace.openTextDocument({ content, language: format === 'json' ? 'json' : 'markdown' });
-      await vscode.window.showTextDocument(doc);
-    }),
+          chatProvider.postStatus('🚀 Pipeline execution starting…');
+          runtime!.orchestratePipeline(
+            objective,
+            allAgents,
+            (update) => {
+              pipelineCurrentAgent = update.agent;
+              const elapsed = Math.round((Date.now() - pipelineStart) / 1000);
+              if (update.status === 'completed' && update.output) {
+                const summary = update.output.length > 2000
+                  ? update.output.slice(0, 2000) + '\n…(truncated)'
+                  : update.output;
+                chatProvider.postAssistant(
+                  `**[${update.phase}] @${update.agent}** ✅ *(${elapsed}s)*\n\n${summary}`,
+                );
+              } else {
+                chatProvider.postStatus(`⏳ [${update.phase}] @${update.agent}: ${update.status} (${elapsed}s)`);
+              }
+            },
+            undefined,
+          ).then((execution) => {
+            clearInterval(heartbeat);
+            pipelineRunning = false;
+            pipelineCurrentAgent = '';
+            const totalTime = Math.round((Date.now() - pipelineStart) / 1000);
+            const completedCount = execution.phaseResults
+              .flatMap(p => p.results)
+              .filter(r => r.status === 'completed').length;
+            const failedCount = execution.phaseResults
+              .flatMap(p => p.results)
+              .filter(r => r.status === 'failed').length;
+            chatProvider.postAssistant(
+              `🏁 **Pipeline ${execution.status}** *(${totalTime}s total)*\n\n` +
+              `✅ ${completedCount} agents completed, ❌ ${failedCount} failed\n` +
+              `Phases: ${execution.phaseResults.map(p => p.phase).join(' → ')}`,
+            );
+            chatProvider.postStatus('Ready');
+          }).catch((err) => {
+            clearInterval(heartbeat);
+            pipelineRunning = false;
+            pipelineCurrentAgent = '';
+            const msg = err instanceof Error ? err.message : String(err);
+            chatProvider.postError(`Pipeline execution failed: ${msg}`);
+          });
 
-    // ─── Open Chat (focus sidebar) ─────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.openChat', () => {
-      vscode.commands.executeCommand('thinkcoffee.chat.focus');
-    }),
-
-    // --- Open Pipeline Chat History ---
-    vscode.commands.registerCommand('thinkcoffee.openPipelineChat', (pipelineId: string) => {
-      if (!pipelineId) {
-        vscode.window.showWarningMessage('ID do Pipeline nao fornecido.');
-        return;
-      }
-      const historyService = getPipelineChatHistoryService();
-      const chatService = historyService.getChatForPipeline(pipelineId);
-      ChatPanel.create(context.extensionUri, chatService);
-    }),
-
-    // ─── Context commands (kept for editor/explorer menus) ───
-    vscode.commands.registerCommand('thinkcoffee.openContextFile', async () => {
-      // No-op without tree items — context is in the chat now
-    }),
-    vscode.commands.registerCommand('thinkcoffee.viewContext', async () => {}),
-
-    // ─── Pipeline: Create ────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.createPipeline', async () => {
-      const project = await getProject();
-      if (!project) return;
-
-      const objective = await vscode.window.showInputBox({
-        prompt: 'What should be built? (objective)',
-        placeHolder: 'e.g. criar sistema de login com OAuth',
-      });
-      if (!objective) return;
-
-      const ws = getWorkspaceRoot() || '';
-      const p = pipelineService.create(project.id, objective, ws);
-      vscode.window.showInformationMessage(`Pipeline created: ${p.objective}`);
-      chatProvider.refresh();
-      chatHistoryView.refresh();
-    }),
-
-    // ─── Pipeline: Approve Phase ─────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.approvePhase', async () => {
-      const project = await getProject();
-      if (!project) return;
-      const active = pipelineService.getActive(project.id);
-      if (!active) { vscode.window.showWarningMessage('No active pipeline.'); return; }
-
-      const p = pipelineService.approvePhase(project.id, active.id);
-      if (!p) return;
-
-      const nextPhase = p.phases[p.currentPhase];
-      const msg = p.status === 'completed'
-        ? 'Pipeline completed! All phases done.'
-        : `Approved! Next: ${nextPhase.name} (${nextPhase.agents.map(a => AGENT_META[a].label).join(', ')})`;
-      vscode.window.showInformationMessage(msg);
-      chatProvider.refresh();
-    }),
-
-    // ─── Pipeline: Reject Phase ──────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.rejectPhase', async () => {
-      const project = await getProject();
-      if (!project) return;
-      const active = pipelineService.getActive(project.id);
-      if (!active) { vscode.window.showWarningMessage('No active pipeline.'); return; }
-
-      const feedback = await vscode.window.showInputBox({
-        prompt: 'Feedback for the agents (what needs to change)',
-        placeHolder: 'Explain what needs to improvement...',
-      });
-      if (!feedback) return;
-
-      pipelineService.rejectPhase(project.id, active.id, feedback);
-      vscode.window.showInformationMessage('Phase rejected. Agents will redo with your feedback.');
-      chatProvider.refresh();
-    }),
-
-    // ─── Pipeline: View Task Output (no-op, shown in chat) ──
-    vscode.commands.registerCommand('thinkcoffee.viewTaskOutput', () => {}),
-
-    // ─── Pipeline: Refresh ───────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.refreshPipeline', () => chatProvider.refresh()),
-    vscode.commands.registerCommand('thinkcoffee.refreshProjects', () => chatProvider.refresh()),
-
-    // ─── Open Another Project in New Window ──────────────────
-    vscode.commands.registerCommand('thinkcoffee.openOtherProject', async () => {
-      const all = await projectService.list();
-      const others = all.filter(p => !activeProject || p.id !== activeProject.id);
-      if (!others.length) {
-        vscode.window.showInformationMessage('No other projects. Each workspace creates its own project.');
-        return;
-      }
-
-      const selected = await vscode.window.showQuickPick(
-        others.map(p => {
-          const ws = (p.metadata as any)?.workspace;
-          return {
-            label: p.name,
-            description: ws ? path.basename(ws) : 'no workspace',
-            detail: ws || 'Not linked to a folder',
-            workspace: ws as string | undefined,
-          };
-        }),
-        { placeHolder: 'Select a project to open in a new window' }
-      );
-      if (!selected) return;
-
-      if (selected.workspace && fs.existsSync(selected.workspace)) {
-        const uri = vscode.Uri.file(selected.workspace);
-        await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: true });
-      } else {
-        vscode.window.showWarningMessage(`Project "${selected.label}" has no linked workspace folder.`);
-      }
-    }),
-
-    // ─── Configure Agent Models ──────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.configureAgentModels', async () => {
-      const config = loadAgentConfig();
-      const presetKeys = Object.keys(QUALITY_PRESETS) as QualityPreset[];
-
-      const modeChoice = await vscode.window.showQuickPick([
-        // Quality presets first
-        ...presetKeys.map(key => {
-          const p = QUALITY_PRESETS[key];
-          return {
-            label: p.label,
-            description: p.subtitle,
-            detail: p.description,
-            value: key as string,
-          };
-        }),
-        // Then auto mode
-        {
-          label: 'Auto',
-          description: 'Let PM choose models for each agent',
-          detail: 'The Product Manager agent will analyze the objective and assign optimal models',
-          value: 'auto',
-        },
-        // Then direct model config
-        {
-          label: 'Manual',
-          description: 'Choose model for each agent manually',
-          detail: 'Set a specific model for any agent role',
-          value: 'manual',
-        },
-      ], { placeHolder: 'Select mode or preset' });
-
-      if (!modeChoice) return;
-
-      if (modeChoice.value === 'manual') {
-        // Manual: pick an agent, then a model
-        const roles = Object.keys(AGENT_META) as AgentRole[];
-        const agentPick = await vscode.window.showQuickPick(
-          roles.map(r => ({ label: AGENT_META[r].label, description: r, role: r })),
-          { placeHolder: 'Which agent to configure?' }
-        );
-        if (!agentPick) return;
-
-        const modelPick = await vscode.window.showInputBox({
-          prompt: `Model for ${agentPick.label}`,
-          value: getModelForAgent(agentPick.role, config),
-          placeHolder: 'e.g. claude-sonnet-4-20250514, gpt-4.1, gemini-2.5-pro',
-        });
-        if (!modelPick) return;
-
-        setAgentModel(agentPick.role, modelPick);
-        vscode.window.showInformationMessage(`${agentPick.label} now uses ${modelPick}`);
-      } else if (modeChoice.value === 'auto') {
-        saveAgentConfig({ ...config, mode: 'auto' });
-        vscode.window.showInformationMessage('Mode: Auto — PM will assign models when running pipelines.');
-      } else {
-        // Apply a quality preset
-        applyQualityPreset(modeChoice.value as QualityPreset);
-        const preset = QUALITY_PRESETS[modeChoice.value as QualityPreset];
-        vscode.window.showInformationMessage(`Preset applied: ${preset.label}`);
-      }
-
-      chatProvider.refresh();
-    }),
-
-    // ═══════════════════════════════════════════════════════════
-    // SAFETY NET COMMANDS
-    // ═══════════════════════════════════════════════════════════
-
-    // ─── Toggle Dry-Run Mode ─────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.toggleDryRun', () => {
-      if (!safetyNetIntegration) {
-        vscode.window.showWarningMessage('Safety Net nao disponivel - abra um workspace primeiro.');
-        return;
-      }
-      safetyNetIntegration.toggleDryRun();
-    }),
-
-    // ─── Open Safety Net Panel ───────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.openSafetyNet', () => {
-      const wsRoot = getWorkspaceRoot();
-      if (!wsRoot) {
-        vscode.window.showWarningMessage('Nenhum workspace aberto.');
-        return;
-      }
-
-      // Tentar obter pipeline ativo
-      let pipelineId: string | undefined;
-      if (activeProject) {
-        const active = pipelineService.getActive(activeProject.id);
-        if (active) {
-          pipelineId = active.id;
+          // Return early since we already posted the reply
+          return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          replyText += `\n\n⚠️ Could not persist pipeline: ${msg}`;
+        }
+      } else if (result.action === 'approve-phase') {
+        const pipeline = activePipeline;
+        if (pipeline) {
+          try {
+            const updated = approveCurrentPhase(projectId, pipeline.id);
+            if (updated) {
+              replyText += `\n\n${formatPipelineStatus(updated)}`;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            replyText += `\n\n⚠️ Could not approve phase: ${msg}`;
+          }
+        } else {
+          replyText += '\n\n⚠️ No active pipeline found. Create one first.';
+        }
+      } else if (result.action === 'reject-phase') {
+        const pipeline = activePipeline;
+        if (pipeline) {
+          try {
+            const updated = rejectCurrentPhase(projectId, pipeline.id);
+            if (updated) {
+              replyText += `\n\n${formatPipelineStatus(updated)}`;
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            replyText += `\n\n⚠️ Could not reject phase: ${msg}`;
+          }
+        } else {
+          replyText += '\n\n⚠️ No active pipeline found.';
+        }
+      } else if (result.action === 'show-status') {
+        if (activePipeline) {
+          replyText += `\n\n${formatPipelineStatus(activePipeline)}`;
+        } else {
+          replyText += '\n\nNo active pipeline. Use "create pipeline for <objective>" to start one.';
         }
       }
 
-      SafetyNetPanel.createOrShow(context.extensionUri, wsRoot, pipelineId);
-    }),
+      // Record the PM response in the shared JSONL channel so MCP tools see it
+      appendChatMessage(projectId, 'pm', 'response', replyText);
 
-    // ─── Rollback Phase ──────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.rollback', async () => {
-      if (!safetyNetIntegration) {
-        vscode.window.showWarningMessage('Safety Net nao disponivel.');
+      out.appendLine(`[pm:chat] action=${result.action}`);
+      chatProvider.postAssistant(replyText);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      out.appendLine(`[pm:chat:error] ${message}`);
+      chatProvider.postError(`PM failed to process request: ${message}`);
+    }
+  });
+
+  register('thinkcoffee.advancedSoftware.generateCode', async () => {
+    const prompt = await vscode.window.showInputBox({ prompt: 'Describe the code you need' });
+    if (!prompt || !runtime) return;
+
+    const language = await vscode.window.showQuickPick(['typescript', 'javascript', 'python'], {
+      placeHolder: 'Target language',
+    });
+    if (!language) return;
+
+    const result = await runtime.runLongTask('ThinkCoffee: advanced code generation', async (_progress, _token) => {
+      return runtime!.generateAdvancedCode(prompt, language);
+    });
+    if (!result) return;
+
+    const document = await vscode.workspace.openTextDocument({ content: result.code, language });
+    await vscode.window.showTextDocument(document, { preview: false });
+    out.appendLine(`[generateCode] ${result.explanation}`);
+  });
+
+  register('thinkcoffee.advancedSoftware.debugCode', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !runtime) {
+      vscode.window.showWarningMessage('Open a file to run debug analysis.');
+      return;
+    }
+
+    const issue = await vscode.window.showInputBox({ prompt: 'What is failing?' });
+    if (!issue) return;
+
+    const source = editor.document.getText();
+    const result = await runtime.runLongTask('ThinkCoffee: automatic debug analysis', async (_progress, _token) => {
+      return runtime!.debugCode(source, issue);
+    });
+    if (!result) return;
+
+    out.appendLine('[debugCode] Summary:');
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedSoftware.refactorCode', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !runtime) return;
+
+    const strategy = await vscode.window.showQuickPick(
+      ['extract-function', 'optimize-performance', 'improve-readability', 'remove-duplication', 'add-type-safety'],
+      { placeHolder: 'Refactoring strategy' },
+    );
+    if (!strategy) return;
+
+    const source = editor.document.getText();
+    const result = await runtime.runLongTask('ThinkCoffee: code refactoring', async (_progress, _token) => {
+      return runtime!.refactorCode(source, strategy);
+    });
+    if (!result) return;
+
+    const doc = await vscode.workspace.openTextDocument({
+      content: result.code,
+      language: editor.document.languageId,
+    });
+    await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+  });
+
+  register('thinkcoffee.advancedSecurity.scanVulnerabilities', async () => {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (!folder || !runtime) return;
+
+    const result = await runtime.runLongTask('ThinkCoffee: defensive security scan', async (_progress, _token) => {
+      return runtime!.runSecurityDefenseScan(folder.uri.fsPath);
+    });
+    if (!result) return;
+
+    out.appendLine('[securityScan] Findings');
+    for (const finding of result.findings) {
+      out.appendLine(`- [${finding.severity.toUpperCase()}] ${finding.file}: ${finding.title}`);
+    }
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedSecurity.simulateAttack', async () => {
+    const target = await vscode.window.showInputBox({ prompt: 'Target for controlled simulation' });
+    if (!target || !runtime) return;
+
+    const analysis = await runtime.adaptiveReasoning(
+      `Create defensive multi-step attack simulation plan for controlled testing on: ${target}`,
+      'deep',
+    );
+    out.appendLine('[attackSimulation]');
+    out.appendLine(analysis.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedSecurity.zeroDayDiscovery', async () => {
+    const system = await vscode.window.showInputBox({ prompt: 'System description for defensive zero-day hypotheses' });
+    if (!system || !runtime) return;
+
+    const analysis = await runtime.adaptiveReasoning(
+      `Identify plausible zero-day hypotheses and defensive validation tests for: ${system}`,
+      'deep',
+    );
+    out.appendLine('[zeroDayDiscovery]');
+    out.appendLine(analysis.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedMultimodal.analyzeImage', async () => {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectMany: true,
+      canSelectFolders: false,
+      filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg'] },
+    });
+    if (!selected || selected.length === 0 || !runtime) return;
+
+    const result = await runtime.analyzeMultimodal(selected.map(x => x.fsPath), 'Image analysis');
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedMultimodal.analyzeDiagram', async () => {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectMany: true,
+      canSelectFolders: false,
+      filters: { Diagrams: ['svg', 'png', 'jpg', 'jpeg', 'md', 'txt'] },
+    });
+    if (!selected || selected.length === 0 || !runtime) return;
+
+    const result = await runtime.analyzeMultimodal(selected.map(x => x.fsPath), 'Diagram interpretation');
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.advancedMultimodal.synthesizeKnowledge', async () => {
+    const selected = await vscode.window.showOpenDialog({ canSelectMany: true, canSelectFolders: false });
+    if (!selected || selected.length === 0 || !runtime) return;
+
+    const topic = await vscode.window.showInputBox({ prompt: 'Knowledge synthesis topic' });
+    if (!topic) return;
+
+    const result = await runtime.analyzeMultimodal(selected.map(x => x.fsPath), topic);
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.reasoning.multiStepSolve', async () => {
+    const problem = await vscode.window.showInputBox({ prompt: 'Describe a complex multi-step problem' });
+    if (!problem || !runtime) return;
+
+    const result = await runtime.adaptiveReasoning(problem, 'deep');
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.reasoning.adaptiveThink', async () => {
+    const topic = await vscode.window.showInputBox({ prompt: 'Topic for adaptive deep reasoning' });
+    if (!topic || !runtime) return;
+
+    const result = await runtime.adaptiveReasoning(topic, 'deep');
+    out.appendLine(result.summary);
+    out.show(true);
+  });
+
+  register('thinkcoffee.workflow.createComplex', async () => {
+    if (!runtime) return;
+    const name = await vscode.window.showInputBox({ prompt: 'Workflow name' });
+    if (!name) return;
+
+    const goal = await vscode.window.showInputBox({ prompt: 'Workflow goal' });
+    if (!goal) return;
+
+    const raw = await vscode.window.showInputBox({ prompt: 'Step titles (comma-separated)' });
+    if (!raw) return;
+
+    const steps = raw.split(',').map(s => s.trim()).filter(Boolean);
+
+    const remote = getOrchestratorClient();
+    if (remote) {
+      const workspaceId = await getWorkspaceId();
+      if (!workspaceId) {
+        vscode.window.showWarningMessage('Set thinkcoffee.orchestrator.workspaceId or open a folder-based workspace.');
         return;
       }
 
-      const project = await getProject();
-      if (!project) return;
+      try {
+        const planResponse = await remote.createPlan({
+          workspaceId,
+          objective: `${name}: ${goal}`,
+          constraints: steps,
+          availableModalities: ['text'],
+          priority: 'normal',
+        });
 
-      const active = pipelineService.getActive(project.id);
-      if (!active) {
-        vscode.window.showWarningMessage('Nenhum pipeline ativo.');
+        const planId = planResponse.data?.plan?.id || planResponse.data?.id;
+        if (!planResponse.success || !planId) {
+          throw new Error(planResponse.error?.message || 'Unable to create orchestrator plan');
+        }
+
+        await context.workspaceState.update(PLAN_ID_KEY, planId);
+        await context.workspaceState.update(WORKSPACE_ID_KEY, workspaceId);
+        vscode.window.showInformationMessage(`Orchestrator plan created: ${planId}`);
+        return;
+      } catch (error) {
+        vscode.window.showWarningMessage(
+          `Remote orchestrator is unavailable. Using local workflow fallback. ${toOrchestratorUserMessage(error)}`,
+        );
+      }
+    }
+
+    const workflow = runtime.createWorkflow(name, goal, steps);
+    await context.workspaceState.update('thinkcoffee.currentWorkflow', workflow);
+    vscode.window.showInformationMessage(`Workflow ${workflow.name} created with ${workflow.steps.length} steps.`);
+  });
+
+  register('thinkcoffee.workflow.executeAutonomous', async () => {
+    const remote = getOrchestratorClient();
+    const planId = context.workspaceState.get<string>(PLAN_ID_KEY);
+    const workspaceId = context.workspaceState.get<string>(WORKSPACE_ID_KEY) || await getWorkspaceId();
+
+    if (remote && planId && workspaceId) {
+      try {
+        const runResponse = await remote.startRun(workspaceId, planId);
+        const runId = runResponse.data?.id;
+        if (!runResponse.success || !runId) {
+          throw new Error(runResponse.error?.message || 'Unable to start orchestrator run');
+        }
+
+        await context.workspaceState.update(RUN_ID_KEY, runId);
+
+        const runStatus = await remote.getRun(runId);
+        const checkpoints = await remote.getCheckpoints(runId);
+        runtime?.getOutput().appendLine(`[orchestrator] run=${runId} status=${runStatus.data?.status || 'unknown'}`);
+        runtime?.getOutput().appendLine(`[orchestrator] checkpoints=${(checkpoints.data || []).length}`);
+        runtime?.getOutput().show(true);
+
+        vscode.window.showInformationMessage(`Autonomous orchestrator run started: ${runId}`);
+        return;
+      } catch (error) {
+        vscode.window.showWarningMessage(
+          `Remote orchestrator execution failed. Falling back to local runtime. ${toOrchestratorUserMessage(error)}`,
+        );
+      }
+    }
+
+    const stored = context.workspaceState.get<WorkflowDefinition>('thinkcoffee.currentWorkflow');
+
+    if (!stored || !runtime) {
+      vscode.window.showWarningMessage('No workflow found. Create one first.');
+      return;
+    }
+
+    const existing = runtime.getWorkflowState(stored.id);
+    let resumeFromStep = 0;
+    if (existing && existing.status !== 'completed' && existing.currentStepIndex > 0) {
+      const pick = await vscode.window.showQuickPick(
+        [
+          {
+            label: 'Resume from checkpoint',
+            description: `Continue at step ${existing.currentStepIndex + 1}`,
+            value: 'resume',
+          },
+          {
+            label: 'Restart workflow',
+            description: 'Discard previous checkpoint and run from step 1',
+            value: 'restart',
+          },
+        ],
+        { placeHolder: 'A previous workflow execution state was found' },
+      );
+
+      if (!pick) return;
+      if (pick.value === 'resume') {
+        resumeFromStep = existing.currentStepIndex;
+      } else {
+        await runtime.clearWorkflowState(stored.id);
+      }
+    }
+
+    const state = await runtime.executeWorkflow(stored, async step => {
+      runtime!.getOutput().appendLine(`[workflow] ${step.title}`);
+      const reasoning = await runtime!.adaptiveReasoning(`${stored.goal} :: ${step.title}`, 'standard');
+      return {
+        summary: reasoning.summary,
+        confidence: reasoning.confidence,
+      };
+    }, {
+      resumeFromStepIndex: resumeFromStep,
+    });
+
+    runtime.getOutput().appendLine('[workflow] Artifacts');
+    for (const artifact of state.artifacts) {
+      runtime.getOutput().appendLine(`- ${artifact.stepTitle}: ${artifact.summary}`);
+    }
+    runtime.getOutput().show(true);
+
+    if (state.status === 'completed') {
+      vscode.window.showInformationMessage('Autonomous workflow execution completed.');
+    } else if (state.status === 'cancelled') {
+      vscode.window.showWarningMessage('Autonomous workflow execution cancelled.');
+    } else {
+      vscode.window.showErrorMessage('Autonomous workflow execution failed. Check output for details.');
+    }
+  });
+
+  register('thinkcoffee.orchestrator.showRunStatus', async () => {
+    const remote = getOrchestratorClient();
+    if (!remote) {
+      vscode.window.showWarningMessage('Configure thinkcoffee.orchestrator.baseUrl to use remote run management.');
+      return;
+    }
+
+    const runId = await resolveRunId(context, remote);
+    if (!runId) return;
+
+    try {
+      const run = await remote.getRun(runId);
+      if (!run.success || !run.data) {
+        vscode.window.showWarningMessage(run.error?.message || 'Could not fetch orchestrator run status.');
         return;
       }
 
-      // Perguntar qual fase reverter
-      const phases = active.phases.map((p, i) => ({
-        label: `Fase ${i}: ${p.name}`,
-        description: p.status,
-        phaseIndex: i,
+      await context.workspaceState.update(RUN_ID_KEY, runId);
+      const text = [
+        '# Orchestrator Run Status',
+        '',
+        `- Run ID: ${runId}`,
+        `- Status: ${run.data.status || 'unknown'}`,
+        `- Current Step: ${run.data.currentStep ?? 'n/a'}`,
+        `- Completed At: ${run.data.completedAt || 'n/a'}`,
+      ].join('\n');
+      const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
+      await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to fetch run status. ${toOrchestratorUserMessage(error)}`);
+    }
+  });
+
+  register('thinkcoffee.orchestrator.showCheckpoints', async () => {
+    const remote = getOrchestratorClient();
+    if (!remote) {
+      vscode.window.showWarningMessage('Configure thinkcoffee.orchestrator.baseUrl to use remote run management.');
+      return;
+    }
+
+    const runId = await resolveRunId(context, remote);
+    if (!runId) return;
+
+    try {
+      const response = await remote.getCheckpoints(runId);
+      if (!response.success) {
+        vscode.window.showWarningMessage(response.error?.message || 'Could not fetch checkpoints.');
+        return;
+      }
+
+      const checkpoints = response.data || [];
+      const lines = checkpoints.length === 0
+        ? ['- No checkpoints recorded yet.']
+        : checkpoints.map((cp, idx) => `- ${idx + 1}. ${JSON.stringify(cp)}`);
+      const doc = await vscode.workspace.openTextDocument({
+        language: 'markdown',
+        content: ['# Orchestrator Checkpoints', '', `Run: ${runId}`, '', ...lines].join('\n'),
+      });
+      await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to fetch checkpoints. ${toOrchestratorUserMessage(error)}`);
+    }
+  });
+
+  register('thinkcoffee.orchestrator.pauseRun', async () => {
+    const remote = getOrchestratorClient();
+    if (!remote) {
+      vscode.window.showWarningMessage('Configure thinkcoffee.orchestrator.baseUrl to use remote run management.');
+      return;
+    }
+
+    const runId = await resolveRunId(context, remote);
+    if (!runId) return;
+
+    try {
+      const response = await remote.pauseRun(runId);
+      if (!response.success) {
+        vscode.window.showWarningMessage(response.error?.message || 'Could not pause orchestrator run.');
+        return;
+      }
+      await context.workspaceState.update(RUN_ID_KEY, runId);
+      vscode.window.showInformationMessage(`Run ${runId} paused.`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to pause run. ${toOrchestratorUserMessage(error)}`);
+    }
+  });
+
+  register('thinkcoffee.orchestrator.resumeRun', async () => {
+    const remote = getOrchestratorClient();
+    if (!remote) {
+      vscode.window.showWarningMessage('Configure thinkcoffee.orchestrator.baseUrl to use remote run management.');
+      return;
+    }
+
+    const runId = await resolveRunId(context, remote);
+    if (!runId) return;
+
+    try {
+      const response = await remote.resumeRun(runId);
+      if (!response.success) {
+        vscode.window.showWarningMessage(response.error?.message || 'Could not resume orchestrator run.');
+        return;
+      }
+      await context.workspaceState.update(RUN_ID_KEY, runId);
+      vscode.window.showInformationMessage(`Run ${runId} resumed.`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to resume run. ${toOrchestratorUserMessage(error)}`);
+    }
+  });
+
+  register('thinkcoffee.orchestrator.selectRun', async () => {
+    const remote = getOrchestratorClient();
+    if (!remote) {
+      vscode.window.showWarningMessage('Configure thinkcoffee.orchestrator.baseUrl to use remote run management.');
+      return;
+    }
+
+    const workspaceId = context.workspaceState.get<string>(WORKSPACE_ID_KEY) || await getWorkspaceId();
+    if (!workspaceId) {
+      vscode.window.showWarningMessage('Set thinkcoffee.orchestrator.workspaceId or open a folder-based workspace.');
+      return;
+    }
+
+    try {
+      const runs = await remote.listRuns(workspaceId);
+      const options = (runs.data || []).map(run => ({
+        label: run.id,
+        description: `status=${run.status || 'unknown'} step=${run.currentStep ?? 'n/a'}`,
       }));
 
-      const selected = await vscode.window.showQuickPick(phases, {
-        placeHolder: 'Selecione a fase para reverter',
-      });
+      if (options.length === 0) {
+        vscode.window.showInformationMessage('No remote runs found for this workspace.');
+        return;
+      }
 
-      if (!selected) return;
+      const pick = await vscode.window.showQuickPick(options, { placeHolder: 'Select orchestrator run' });
+      if (!pick) return;
 
-      const chat = chatProvider.getActiveChat();
-      await safetyNetIntegration.executeRollback(
-        active.id,
-        selected.phaseIndex,
-        chat,
-        pipelineService,
-        project.id
+      await context.workspaceState.update(RUN_ID_KEY, pick.label);
+      await context.workspaceState.update(WORKSPACE_ID_KEY, workspaceId);
+      vscode.window.showInformationMessage(`Selected run ${pick.label}`);
+    } catch (error) {
+      vscode.window.showErrorMessage(`Failed to list runs. ${toOrchestratorUserMessage(error)}`);
+    }
+  });
+
+  register('thinkcoffee.stopAgents', async () => {
+    if (!runtime) return;
+    const canceled = runtime.cancelAllRuns();
+    vscode.window.showInformationMessage(`Stopped ${canceled} running task(s).`);
+  });
+
+  register('thinkcoffee.runPhase', async () => {
+    await vscode.commands.executeCommand('thinkcoffee.workflow.executeAutonomous');
+  });
+
+  register('thinkcoffee.invokeAgent', async () => {
+    const action = await vscode.window.showQuickPick(
+      [
+        'adaptive-reasoning',
+        'multi-step-workflow',
+        'security-defense-analysis',
+        'multimodal-synthesis',
+        'restriction-boundary-test-plan',
+      ],
+      { placeHolder: 'Select autonomous capability' },
+    );
+    if (!action || !runtime) return;
+
+    if (action === 'restriction-boundary-test-plan') {
+      vscode.window.showWarningMessage(
+        'Restriction evasion is not executed by this extension. Only controlled defensive boundary test plans are supported.',
       );
+      return;
+    }
 
-      chatProvider.refresh();
-    }),
+    const result = await runtime.adaptiveReasoning(`Run capability: ${action}`, 'standard');
+    runtime.getOutput().appendLine(result.summary);
+    runtime.getOutput().show(true);
+  });
 
-    // ─── List Snapshots ──────────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.listSnapshots', async () => {
-      if (!safetyNetIntegration) {
-        vscode.window.showWarningMessage('Safety Net nao disponivel.');
-        return;
-      }
+  const pmDelegated: PmDelegatedCommand[] = [
+    { command: 'thinkcoffee.refreshProjects', goal: 'Refresh project context graph and dependencies' },
+    { command: 'thinkcoffee.createProject', goal: 'Create a new project context and baseline plan', ask: 'Project name or objective' },
+    { command: 'thinkcoffee.addContext', goal: 'Add context entry for PM planning', ask: 'Context to add' },
+    { command: 'thinkcoffee.addFileAsContext', goal: 'Summarize selected file as context for PM and agents' },
+    { command: 'thinkcoffee.addSelectionAsContext', goal: 'Summarize editor selection as context for PM and agents' },
+    { command: 'thinkcoffee.addStructureAsContext', goal: 'Capture workspace structure as context for PM and agents' },
+    { command: 'thinkcoffee.addDecision', goal: 'Record a technical decision with rationale', ask: 'Decision statement' },
+    { command: 'thinkcoffee.syncContext', goal: 'Sync managed context to configured AI tools' },
+    { command: 'thinkcoffee.exportContext', goal: 'Export consolidated context package' },
+    { command: 'thinkcoffee.openContextFile', goal: 'Open context artifact selected by PM' },
+    { command: 'thinkcoffee.viewContext', goal: 'Inspect a context entry and decision links' },
+    { command: 'thinkcoffee.openChat', goal: 'Open PM chat session and route next actions' },
+    { command: 'thinkcoffee.createPipeline', goal: 'Create phased delivery pipeline', delegate: 'create-workflow' },
+    { command: 'thinkcoffee.approvePhase', goal: 'Approve current phase and move to next', delegate: 'resume-run' },
+    { command: 'thinkcoffee.rejectPhase', goal: 'Reject current phase and pause for rework', delegate: 'pause-run' },
+    { command: 'thinkcoffee.viewTaskOutput', goal: 'Show output from latest delegated PM task' },
+    { command: 'thinkcoffee.refreshPipeline', goal: 'Refresh pipeline execution status', delegate: 'show-run' },
+    { command: 'thinkcoffee.openOtherProject', goal: 'Switch PM context to another project', ask: 'Project identifier' },
+    { command: 'thinkcoffee.configureAgentModels', goal: 'Configure model strategy by role and budget' },
+    { command: 'thinkcoffee.viewAgentModels', goal: 'Display active model assignments by role' },
+    { command: 'thinkcoffee.toggleDryRun', goal: 'Toggle PM dry-run mode without applying changes', delegate: 'toggle-dry-run' },
+    { command: 'thinkcoffee.openSafetyNet', goal: 'Run safety-net checks and defensive scan', delegate: 'safety-scan' },
+    { command: 'thinkcoffee.rollback', goal: 'Rollback current phase to previous stable checkpoint', delegate: 'stop-runs' },
+    { command: 'thinkcoffee.listSnapshots', goal: 'List snapshots available for rollback' },
+    { command: 'thinkcoffee.cleanupSnapshots', goal: 'Cleanup stale snapshots based on retention policy' },
+  ];
 
-      const project = await getProject();
-      if (!project) return;
+  const delegateToPm = async (
+    command: string,
+    goal: string,
+    ask?: string,
+    delegate?: PmDelegateMode,
+  ): Promise<void> => {
+    if (!runtime) return;
 
-      const active = pipelineService.getActive(project.id);
-      if (!active) {
-        vscode.window.showWarningMessage('Nenhum pipeline ativo.');
-        return;
-      }
+    if (delegate === 'create-workflow') {
+      await vscode.commands.executeCommand('thinkcoffee.workflow.createComplex');
+      return;
+    }
+    if (delegate === 'resume-run') {
+      await vscode.commands.executeCommand('thinkcoffee.orchestrator.resumeRun');
+      return;
+    }
+    if (delegate === 'pause-run') {
+      await vscode.commands.executeCommand('thinkcoffee.orchestrator.pauseRun');
+      return;
+    }
+    if (delegate === 'show-run') {
+      await vscode.commands.executeCommand('thinkcoffee.orchestrator.showRunStatus');
+      return;
+    }
+    if (delegate === 'safety-scan') {
+      await vscode.commands.executeCommand('thinkcoffee.advancedSecurity.scanVulnerabilities');
+      return;
+    }
+    if (delegate === 'stop-runs') {
+      await vscode.commands.executeCommand('thinkcoffee.stopAgents');
+      return;
+    }
+    if (delegate === 'toggle-dry-run') {
+      const key = 'thinkcoffee.pmDryRun';
+      const current = context.workspaceState.get<boolean>(key) ?? true;
+      const next = !current;
+      await context.workspaceState.update(key, next);
+      vscode.window.showInformationMessage(`ThinkCoffee PM dry-run: ${next ? 'ON' : 'OFF'}`);
+      return;
+    }
 
-      const chat = chatProvider.getActiveChat();
-      await safetyNetIntegration.listSnapshots(active.id, chat);
-    }),
+    const mode = await vscode.window.showQuickPick(['single-agent', 'multi-agent'], {
+      placeHolder: 'PM delegation mode',
+    });
+    if (!mode) return;
 
-    // ─── Cleanup Snapshots ───────────────────────────────────
-    vscode.commands.registerCommand('thinkcoffee.cleanupSnapshots', async () => {
-      if (!safetyNetIntegration) {
-        vscode.window.showWarningMessage('Safety Net nao disponivel.');
-        return;
-      }
+    const detail = ask
+      ? await vscode.window.showInputBox({ prompt: ask, placeHolder: 'Optional details to refine PM orchestration' })
+      : undefined;
 
-      const confirm = await vscode.window.showWarningMessage(
-        'Tem certeza que deseja limpar snapshots antigos?',
-        { modal: true },
-        'Sim, limpar',
-        'Cancelar'
+    const summary = await runtime.runLongTask(`ThinkCoffee PM delegation: ${command}`, async (_progress, _token) => {
+      return runtime!.adaptiveReasoning(
+        [
+          `PM command: ${command}`,
+          `Goal: ${goal}`,
+          `Delegation mode: ${mode}`,
+          `Details: ${detail?.trim() || 'none'}`,
+          'Return concise execution summary and the next recommended action.',
+        ].join('\n'),
+        mode === 'multi-agent' ? 'deep' : 'standard',
       );
+    });
+    if (!summary) return;
 
-      if (confirm !== 'Sim, limpar') return;
+    out.appendLine(`[pm:${command}] ${summary.summary}`);
+    out.show(true);
+  };
 
-      // Coletar pipelines ativos
-      const activePipelines = new Set<string>();
-      if (activeProject) {
-        const allPipelines = pipelineService.list(activeProject.id);
-        for (const p of allPipelines) {
-          if (p.status === 'active' || p.status === 'in-progress') {
-            activePipelines.add(p.id);
-          }
-        }
-      }
-
-      await safetyNetIntegration.runCleanup(activePipelines);
-    }),
-
-  ); // End of commands
+  for (const item of pmDelegated) {
+    register(item.command, async () => {
+      await delegateToPm(item.command, item.goal, item.ask, item.delegate);
+    });
+  }
 }
 
-export function deactivate() {
-  // Cleanup is handled by disposal
+function normalizeChatPayload(input: unknown): { prompt: string; includeActiveEditor: boolean; images: ChatImageAttachment[] } {
+  if (typeof input === 'string') {
+    return {
+      prompt: input.trim(),
+      includeActiveEditor: false,
+      images: [],
+    };
+  }
+
+  if (!input || typeof input !== 'object') {
+    return {
+      prompt: '',
+      includeActiveEditor: false,
+      images: [],
+    };
+  }
+
+  const candidate = input as ChatAskPayload;
+  const prompt = typeof candidate.prompt === 'string' ? candidate.prompt.trim() : '';
+  const includeActiveEditor = candidate.includeActiveEditor === true;
+  const images = Array.isArray(candidate.images)
+    ? candidate.images
+      .filter((item): item is ChatImageAttachment => {
+        return !!item
+          && typeof item.name === 'string'
+          && typeof item.mimeType === 'string'
+          && typeof item.dataUrl === 'string';
+      })
+      .slice(0, 5)
+    : [];
+
+  return { prompt, includeActiveEditor, images };
+}
+
+function buildActiveEditorContext(): string | undefined {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    return undefined;
+  }
+
+  const document = editor.document;
+  const fullText = document.getText();
+  const content = fullText.length > 12000 ? `${fullText.slice(0, 12000)}\n... [truncated]` : fullText;
+
+  return [
+    `Path: ${document.uri.fsPath}`,
+    `Language: ${document.languageId}`,
+    'Content:',
+    content,
+  ].join('\n');
+}
+
+export function deactivate(): void {
+  if (runtime) {
+    runtime.cancelAllRuns();
+  }
+}
+
+function getOrchestratorClient(): OrchestratorClient | undefined {
+  const cfg = vscode.workspace.getConfiguration('thinkcoffee.orchestrator');
+  const baseUrl = cfg.get<string>('baseUrl') || '';
+  const token = cfg.get<string>('token') || '';
+  const timeoutMs = cfg.get<number>('timeoutMs') || 30_000;
+  if (!baseUrl) return undefined;
+  return new OrchestratorClient({ baseUrl, token: token || undefined, timeoutMs });
+}
+
+function toOrchestratorUserMessage(error: unknown): string {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  if (error instanceof OrchestratorHttpError) {
+    if (error.statusCode === 401 || error.statusCode === 403) {
+      return 'Authentication failed. Check thinkcoffee.orchestrator.token.';
+    }
+    if (error.statusCode === 404) {
+      return 'Endpoint not found. Verify thinkcoffee.orchestrator.baseUrl points to the API root.';
+    }
+    if (error.statusCode >= 500) {
+      return 'Server error from orchestrator API.';
+    }
+    return `Request failed with HTTP ${error.statusCode}.`;
+  }
+  if (code === 'ETIMEDOUT' || (error instanceof Error && /timeout/i.test(error.message))) {
+    return 'Request timed out while contacting orchestrator API.';
+  }
+  if (
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'EAI_AGAIN' ||
+    (error instanceof Error && /ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(error.message))
+  ) {
+    return 'Unable to reach orchestrator API. Check base URL and network connectivity.';
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function resolveRunId(
+  context: vscode.ExtensionContext,
+  remote: OrchestratorClient,
+): Promise<string | undefined> {
+  const current = context.workspaceState.get<string>(RUN_ID_KEY);
+  if (current) {
+    return current;
+  }
+
+  const workspaceId = context.workspaceState.get<string>(WORKSPACE_ID_KEY) || await getWorkspaceId();
+  if (!workspaceId) {
+    const direct = await vscode.window.showInputBox({ prompt: 'Run ID' });
+    return direct?.trim() || undefined;
+  }
+
+  try {
+    const runs = await remote.listRuns(workspaceId);
+    const options = (runs.data || []).map(run => ({
+      label: run.id,
+      description: `status=${run.status || 'unknown'} step=${run.currentStep ?? 'n/a'}`,
+    }));
+    if (options.length === 0) {
+      const direct = await vscode.window.showInputBox({ prompt: 'Run ID' });
+      return direct?.trim() || undefined;
+    }
+    const pick = await vscode.window.showQuickPick(options, {
+      placeHolder: 'Select orchestrator run',
+    });
+    return pick?.label;
+  } catch {
+    const direct = await vscode.window.showInputBox({ prompt: 'Run ID' });
+    return direct?.trim() || undefined;
+  }
+}
+
+async function getWorkspaceId(): Promise<string | undefined> {
+  const cfg = vscode.workspace.getConfiguration('thinkcoffee.orchestrator');
+  const explicit = cfg.get<string>('workspaceId');
+  if (explicit && explicit.trim()) {
+    return explicit.trim();
+  }
+
+  const folderName = vscode.workspace.workspaceFolders?.[0]?.name;
+  if (!folderName) return undefined;
+  return folderName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+}
+
+// === HELPER FUNCTIONS FOR RESULT DISPLAY ===
+
+async function showReasoningResult(
+  title: string,
+  result: { summary: string; steps: string[]; confidence: number }
+): Promise<void> {
+  const text = [
+    `# ${title}`,
+    '',
+    `**Confianca**: ${(result.confidence * 100).toFixed(1)}%`,
+    '',
+    '## Sintese',
+    result.summary,
+    '',
+    '## Etapas',
+    ...result.steps.map(s => `- ${s}`),
+  ].join('\n');
+
+  const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
+  await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+}
+
+async function showSecurityResult(
+  title: string,
+  result: {
+    findings: Array<{ file: string; severity: string; title: string; detail: string }>;
+    attackSimulationPlan: string[];
+    exploitChainHypotheses: string[];
+    defensiveRecommendations: string[];
+  }
+): Promise<void> {
+  const text = [
+    `# ${title}`,
+    '',
+    '## Findings',
+    ...(result.findings.length === 0
+      ? ['- Nenhum finding detectado com heuristicas atuais.']
+      : result.findings.map(f => `- [${f.severity.toUpperCase()}] ${f.file}: ${f.title} -> ${f.detail}`)),
+    '',
+    '## Plano de Simulacao de Ataque (Controlado)',
+    ...result.attackSimulationPlan.map(i => `- ${i}`),
+    '',
+    '## Hipoteses de Cadeia de Exploits',
+    ...result.exploitChainHypotheses.map(i => `- ${i}`),
+    '',
+    '## Recomendacoes Defensivas',
+    ...result.defensiveRecommendations.map(i => `- ${i}`),
+  ].join('\n');
+
+  const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: text });
+  await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+}
+
+async function requireControlledModeConfirmation(): Promise<boolean> {
+  const msg = 'Este recurso realiza testes defensivos de seguranca em modo controlado. Continuar?';
+  const reply = await vscode.window.showWarningMessage(
+    msg,
+    { modal: true },
+    'Continuar (Modo Defensivo)',
+    'Cancelar'
+  );
+  return reply === 'Continuar (Modo Defensivo)';
 }

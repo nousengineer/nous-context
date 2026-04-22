@@ -12,46 +12,46 @@ const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\brm\s+(-[rf]+\s+)*[\/~]/i,
   /\brm\s+-rf?\s+\*/i,
   /\brmdir\s+/i,
-  
+
   // File deletion - Windows
   /\bdel\s+\/[sqf]/i,
   /\brd\s+\/s/i,
   /\brmdir\s+\/s/i,
   /\bRemove-Item\s+.*-Recurse/i,
-  
+
   // Disk operations
   /\bformat\s+[a-z]:/i,
   /\bmkfs\b/i,
   /\bdd\s+if=/i,
   /\bfdisk\b/i,
-  
+
   // System modification
   /\bchmod\s+777/i,
   /\bchown\s+-R\s+/i,
   /\bsudo\s+/i,
   /\bsu\s+-/i,
-  
+
   // Network exfiltration
   /\b(curl|wget)\s+.*\|\s*(ba)?sh/i,
   /\b(curl|wget)\s+.*-o\s+\/tmp/i,
-  
+
   // Package managers with sudo
   /\bsudo\s+(apt|yum|dnf|pacman|brew)/i,
-  
+
   // Git force operations
   /\bgit\s+push\s+.*--force/i,
   /\bgit\s+reset\s+--hard/i,
   /\bgit\s+clean\s+-fd/i,
-  
+
   // Database drops
   /\bDROP\s+(DATABASE|TABLE|SCHEMA)/i,
   /\bTRUNCATE\s+TABLE/i,
   /\bDELETE\s+FROM\s+.*WHERE\s+1\s*=\s*1/i,
-  
+
   // Environment manipulation
   /\bexport\s+PATH=/i,
   /\bunset\s+PATH/i,
-  
+
   // Process killing
   /\bkill\s+-9\s+/i,
   /\bkillall\s+/i,
@@ -65,16 +65,16 @@ const BLOCKED_PATTERNS: RegExp[] = [
   // Fork bombs
   /:\(\)\s*{\s*:\|:&\s*};:/,
   /\bfork\s+bomb/i,
-  
+
   // Crypto miners
   /\bxmrig\b/i,
   /\bcryptominer\b/i,
-  
+
   // Reverse shells
   /\bbash\s+-i\s+>&\s+\/dev\/tcp/i,
   /\bnc\s+-e\s+\/bin\/(ba)?sh/i,
   /\bpython.*socket.*connect/i,
-  
+
   // System destruction
   /\becho\s+.*>\s*\/dev\/sd[a-z]/i,
   /\b>\s*\/dev\/null\s*2>&1\s*&\s*disown/i,
@@ -89,11 +89,12 @@ export interface CommandValidationResult {
 
 /**
  * Validate a shell command before execution.
- * 
+ *
  * @param command - The shell command to validate
+ * @param _workspaceRoot - Optional workspace root (reserved for future path-aware checks)
  * @returns Validation result with risk assessment
  */
-export function validateCommand(command: string): CommandValidationResult {
+export function validateCommand(command: string, _workspaceRoot?: string): CommandValidationResult {
   // Check for completely blocked patterns first
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
@@ -105,7 +106,7 @@ export function validateCommand(command: string): CommandValidationResult {
       };
     }
   }
-  
+
   // Check for destructive patterns
   for (const pattern of DESTRUCTIVE_PATTERNS) {
     if (pattern.test(command)) {
@@ -117,8 +118,8 @@ export function validateCommand(command: string): CommandValidationResult {
       };
     }
   }
-  
-  // Check for moderate risk patterns (network, file writes outside current dir)
+
+  // Check for moderate risk patterns (network, package installs)
   if (isModerateRisk(command)) {
     return {
       allowed: true,
@@ -127,7 +128,7 @@ export function validateCommand(command: string): CommandValidationResult {
       riskLevel: 'moderate',
     };
   }
-  
+
   return {
     allowed: true,
     requiresConfirmation: false,
@@ -163,7 +164,7 @@ function isModerateRisk(command: string): boolean {
     /\bchmod\b/i,
     /\bmkdir\s+-p/i,
   ];
-  
+
   return moderatePatterns.some(p => p.test(command));
 }
 

@@ -1,77 +1,71 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
-import { SnapshotService, SnapshotMetadata } from './SnapshotService';
+import { SnapshotService } from './SnapshotService';
+import type { RollbackResult } from '../types/safety-net';
 
+/**
+ * RollbackService
+ *
+ * Executa rollback de uma fase de pipeline usando os snapshots criados
+ * pelo SnapshotService antes de cada operacao de escrita.
+ *
+ * API alinhada com RollbackCommandHandler.
+ */
 export class RollbackService {
-  private snapshotService: SnapshotService;
-  private workspaceRoot: string;
+  private readonly _snapshotService: SnapshotService;
+  private readonly _workspaceRoot: string;
 
-  constructor(snapshotService: SnapshotService, workspaceRoot: string) {
-    this.snapshotService = snapshotService;
-    this.workspaceRoot = workspaceRoot;
+  constructor(workspaceRoot: string) {
+    this._workspaceRoot = workspaceRoot;
+    this._snapshotService = new SnapshotService(workspaceRoot);
   }
 
-  async plan(pipelineId: string, phaseIndex: number): Promise<{ filesToRestore: string[], filesToDelete: string[] }> {
-    const snapshotMetadata = await this.snapshotService.getSnapshot(pipelineId, phaseIndex);
+  /**
+   * Planeja o rollback (simulacao sem executar).
+   * Retorna lista de arquivos que seriam restaurados/deletados.
+   */
+  async plan(
+    pipelineId: string,
+    phaseIndex: number,
+  ): Promise<{ filesToRestore: string[]; filesToDelete: string[] }> {
+    const snapshot = await this._snapshotService.getSnapshot(pipelineId, phaseIndex);
 
-    if (!snapshotMetadata) {
-      throw new Error(`Snapshot não encontrado para o pipelineId: ${pipelineId}, phaseIndex: ${phaseIndex}`);
+    if (!snapshot) {
+      throw new Error(
+        `Snapshot nao encontrado para pipeline=${pipelineId}, phase=${phaseIndex}`,
+      );
     }
 
     const filesToRestore: string[] = [];
     const filesToDelete: string[] = [];
 
-    for (const fileMetadata of snapshotMetadata.files) {
-      if (fileMetadata.action === 'created') {
-         filesToDelete.push(fileMetadata.path);
-      } else if (fileMetadata.action === 'modified' || fileMetadata.action === 'deleted') {
-         filesToRestore.push(fileMetadata.path);
+    for (const fileMeta of snapshot.files) {
+      if (fileMeta.action === 'created') {
+        filesToDelete.push(fileMeta.path);
+      } else if (fileMeta.action === 'modified' || fileMeta.action === 'deleted') {
+        filesToRestore.push(fileMeta.path);
       }
     }
 
     return { filesToRestore, filesToDelete };
   }
 
-  async execute(pipelineId: string, phaseIndex: number): Promise<void> {
-    const snapshotMetadata = await this.snapshotService.getSnapshot(pipelineId, phaseIndex);
+  /**
+   * Executa o rollback da fase especificada.
+   * Delega para SnapshotService.restore() que tem a logica de disco.
+   */
+  async rollback(pipelineId: string, phaseIndex: number): Promise<RollbackResult> {
+    const result = await this._snapshotService.restore(
+      pipelineId,
+      phaseIndex,
+      this._workspaceRoot,
+    );
 
-    if (!snapshotMetadata) {
-      throw new Error(`Snapshot não encontrado para o pipelineId: ${pipelineId}, phaseIndex: ${phaseIndex}`);
-    }
-
-    const planData = await this.plan(pipelineId, phaseIndex);
-
-    // Rollback deletes (reverse of create)
-    for (const fileToDelete of planData.filesToDelete) {
-        const absolutePath = path.join(this.workspaceRoot, fileToDelete);
-        try {
-            await fs.rm(absolutePath, { force: true });
-        } catch (e: any) {
-            console.warn(`Could not delete file during rollback: ${absolutePath}`);
-        }
-    }
-
-    // Rollback restores (reverse of modify/delete)
-    for (const fileToRestore of planData.filesToRestore) {
-        const absolutePath = path.join(this.workspaceRoot, fileToRestore);
-        const metadata = snapshotMetadata.files.find(f => f.path === fileToRestore);
-        
-        if (!metadata || !metadata.hash) {
-            throw new Error(`Missing hash for file to restore: ${fileToRestore}`);
-        }
-
-        const snapshotFilePath = path.join(this.snapshotService['getSnapshotDir'](pipelineId, phaseIndex), metadata.hash);
-
-        try {
-            // Restore file content from snapshot
-            await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-            await fs.copyFile(snapshotFilePath, absolutePath);
-        } catch (e: any) {
-             console.error(`Could not restore file during rollback: ${absolutePath} from ${snapshotFilePath}`, e);
-             throw e; // Lançamos o erro se a restauração falhar para visibilidade
-        }
-    }
-
-    console.log(`Rollback concluído para o pipelineId: ${pipelineId}, phaseIndex: ${phaseIndex}`);
+    return {
+      restored: result.restored,
+      deleted: result.deleted,
+      errors: result.errors,
+    };
   }
 }

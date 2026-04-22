@@ -2,14 +2,18 @@ import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import { getDatabase, ChatHistoryService, ChatService } from '@thinkcoffee/core';
+import * as http from 'http';
+import crypto from 'crypto';
+import { getDatabase, ChatHistoryService, ChatService, WebSocketServer } from '@thinkcoffee/core';
 import type { ChatMessage, SaveHistoryInput, HistoryFilter } from '@thinkcoffee/core';
+import { requireAuth, optionalAuth, getAuthContext } from './auth-middleware';
 
 const app = new Hono();
 
 // Middleware
 app.use('*', cors());
 app.use('*', logger());
+app.use('*', optionalAuth);
 
 // Instancias dos servicos (inicializadas apos conexao com DB)
 let chatHistoryService: ChatHistoryService | null = null;
@@ -44,18 +48,25 @@ app.get('/health', (c) => {
 
 /**
  * GET /api/chat/history
- * Lista todos os historicos com filtros opcionais
+ * Lista todos os historicos com filtros opcionais (Requer autenticação)
  */
-app.get('/api/chat/history', async (c) => {
+app.get('/api/chat/history', requireAuth, async (c) => {
   if (!chatHistoryService) {
     return c.json({ error: 'Database not initialized' }, 503);
+  }
+
+  const auth = getAuthContext(c);
+  const workspaceId = c.req.query('workspaceId') || auth.workspaceId;
+
+  if (!workspaceId) {
+    return c.json({ error: 'workspaceId is required' }, 400);
   }
 
   const filter: HistoryFilter = {
     projectId: c.req.query('projectId'),
     pipelineId: c.req.query('pipelineId'),
     channel: c.req.query('channel'),
-    workspace: c.req.query('workspace'),
+    workspace: workspaceId,
     limit: c.req.query('limit') ? parseInt(c.req.query('limit')!, 10) : undefined,
     offset: c.req.query('offset') ? parseInt(c.req.query('offset')!, 10) : undefined,
   };
@@ -130,9 +141,9 @@ app.get('/api/chat/history/pipeline/:pipelineId', async (c) => {
 
 /**
  * POST /api/chat/history
- * Salva ou atualiza historico completo
+ * Salva ou atualiza historico completo (Requer autenticação)
  */
-app.post('/api/chat/history', async (c) => {
+app.post('/api/chat/history', requireAuth, async (c) => {
   if (!chatHistoryService) {
     return c.json({ error: 'Database not initialized' }, 503);
   }
@@ -146,11 +157,12 @@ app.post('/api/chat/history', async (c) => {
     return c.json({ error: 'messages array is required' }, 400);
   }
 
+  const auth = getAuthContext(c);
   const history = await chatHistoryService.saveHistory({
     projectId: body.projectId,
     pipelineId: body.pipelineId,
     channel: body.channel,
-    workspace: body.workspace || '',
+    workspace: auth.workspaceId || body.workspace || '',
     messages: body.messages,
   });
 
@@ -503,13 +515,88 @@ app.post('/api/chat/live/:channel/restore', async (c) => {
 
 // Integrar syncEndpoints
 import { createSyncEndpoints } from './syncEndpoints';
+import { createServicesEndpoints } from './servicesEndpoints';
+import {
+  AdvancedFeaturesFactory,
+  type AdvancedFeaturesConfig,
+} from '@thinkcoffee/core';
 
 const db = getDatabase();
 const syncApp = createSyncEndpoints({ db });
 app.route('/api/sync', syncApp);
 
-// Inicializar conexao com banco de dados e iniciar servidor
-export async function startServer(port: number = 3000): Promise<void> {
+// ═══════════════════════════════════════════════════════════════════════════════
+// ADVANCED FEATURES FACTORY & SERVICES ENDPOINTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let advancedFactory: AdvancedFeaturesFactory | null = null;
+
+/**
+ * Inicializar AdvancedFeaturesFactory com configuracoes da aplicacao
+ */
+function initializeAdvancedFeatures(httpServer: http.Server): void {
+  const jwtSecret = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+  const projectPath = process.env.PROJECT_PATH || process.cwd();
+
+  const factoryConfig: AdvancedFeaturesConfig = {
+    httpServer,
+    jwtSecret,
+    aiProvider: undefined as any, // Will be injected via environment
+    db,
+    projectPath,
+    enableTaskExecutor: true,
+    enableWebSocket: true,
+    enableWorkflowEngine: true,
+    enableSecurityAnalysis: false, // Desabilitado por default
+    enableAttackSimulation: false, // Desabilitado por default
+    enablePipelineExecution: true,
+    enableStreaming: true,
+    enablePersistence: true,
+    enableMonitoring: true,
+    enableAutomation: true,
+  };
+
+  advancedFactory = new AdvancedFeaturesFactory(factoryConfig);
+
+  // Injetar servicos de chat
+  if (chatHistoryService) {
+    const chatService = getChatService('default');
+    advancedFactory.injectChatServices(chatHistoryService, chatService);
+  }
+
+  // Criar endpoints de servicos e integrar ao app
+  const servicesApp = createServicesEndpoints({
+    pipelineExecutor: advancedFactory.getPipelineExecutor(),
+    streamingChat: advancedFactory.getStreamingChat(),
+    eventStore: advancedFactory.getEventStore(),
+    chatSync: advancedFactory.getChatSync(),
+    safetyNet: advancedFactory.getSafetyNet(),
+    modelFallback: advancedFactory.getModelFallback(),
+    metrics: advancedFactory.getMetrics(),
+    retentionPolicy: advancedFactory.getRetentionPolicy(),
+    diagnosticPipelines: advancedFactory.getDiagnosticPipelines(),
+    workflowExecutor: advancedFactory.getWorkflowExecutor(),
+    workflowTriggers: advancedFactory.getWorkflowTriggers(),
+  });
+
+  app.route('/api/services', servicesApp);
+  console.log('[server] Advanced Features Factory initialized and services endpoints registered');
+}
+
+/**
+ * Obter instancia da Advanced Features Factory
+ */
+export function getAdvancedFactory(): AdvancedFeaturesFactory | null {
+  return advancedFactory;
+}
+
+let webSocketServer: WebSocketServer | null = null;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+/**
+ * Inicializar conexao com banco de dados e iniciar servidor com WebSocket integrado
+ */
+export async function startServer(port: number = 3000): Promise<http.Server> {
   try {
     // Inicializar conexao com banco de dados
     await db.initialize();
@@ -518,15 +605,36 @@ export async function startServer(port: number = 3000): Promise<void> {
     // Inicializar servicos
     chatHistoryService = new ChatHistoryService(db);
 
-    // Iniciar servidor
-    serve({
-      fetch: app.fetch,
-      port,
+    // Criar servidor HTTP
+    const httpServer = http.createServer();
+
+    // Integrar Hono no servidor HTTP
+    httpServer.on('request', app.fetch as any);
+
+    // Integrar Advanced Features Factory e Services Endpoints
+    initializeAdvancedFeatures(httpServer);
+
+    // Integrar WebSocket Server
+    webSocketServer = new WebSocketServer(httpServer, JWT_SECRET);
+    console.log('[server] WebSocket Server initialized and integrated');
+
+    // Iniciar servidor HTTP
+    httpServer.listen(port, () => {
+      console.log(`[server] Server running on port ${port}`);
+      console.log(`[server] WebSocket endpoint: ws://localhost:${port}`);
+      console.log('[server] Advanced Services available at /api/services/*');
     });
 
-    console.log(`[server] Server running on port ${port}`);
+    return httpServer;
   } catch (error) {
     console.error('[server] Failed to start server:', error);
     throw error;
   }
+}
+
+/**
+ * Obter instancia do WebSocket Server (para uso em outros serviços)
+ */
+export function getWebSocketServer(): WebSocketServer | null {
+  return webSocketServer;
 }

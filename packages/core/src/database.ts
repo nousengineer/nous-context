@@ -1,96 +1,74 @@
+/**
+ * Database Connection & Initialization
+ */
+
 import { DataSource } from 'typeorm';
+import path from 'path';
+import fs from 'fs';
+import { User } from './entities/User';
+import { Workspace } from './entities/Workspace';
+import { WorkspaceMember } from './entities/WorkspaceMember';
 import { Project } from './entities/Project';
+import { ChatHistory } from './entities/ChatHistory';
 import { ContextEntry } from './entities/ContextEntry';
 import { Decision } from './entities/Decision';
 import { ApiKey } from './entities/ApiKey';
 import { SyncConfig } from './entities/SyncConfig';
-import { ChatHistory } from './entities/ChatHistory';
-import path from 'path';
-import os from 'os';
-import fs from 'fs';
+import { Agent } from './entities/Agent';
+import { Task } from './entities/Task';
+import { Workflow } from './entities/Workflow';
+import { SecurityAnalysis } from './entities/SecurityAnalysis';
+import { ExecutionLog } from './entities/ExecutionLog';
+import { OrchestratorPlanRecord } from './entities/OrchestratorPlan';
+import { OrchestratorRunRecord } from './entities/OrchestratorRun';
+import { PolicyDecisionAudit } from './entities/PolicyDecisionAudit';
 
-const ALL_ENTITIES = [Project, ContextEntry, Decision, ApiKey, SyncConfig, ChatHistory];
+const DATA_DIR = process.env.THINKCOFFEE_DATA_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.thinkcoffee');
+const DB_PATH = path.join(DATA_DIR, 'data.sqlite');
 
-export interface DatabaseOptions {
-  /** Full path to the SQLite database file. Defaults to ~/.thinkcoffee/data.sqlite */
-  dbPath?: string;
-  /** Enable TypeORM query logging */
-  logging?: boolean;
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 let dataSource: DataSource | null = null;
 
-function ensureDir(dir: string): void {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-function getDefaultDataDir(): string {
-  return path.join(os.homedir(), '.thinkcoffee');
-}
-
-function getDefaultDbPath(): string {
-  const dir = getDefaultDataDir();
-  ensureDir(dir);
-  return path.join(dir, 'data.sqlite');
-}
-
-function resolveDbPath(options: DatabaseOptions): string {
-  if (options.dbPath) {
-    return options.dbPath;
-  }
-
-  const envDbPath = process.env.THINKCOFFEE_DB_PATH?.trim();
-  if (envDbPath) {
-    return envDbPath === ':memory:' ? envDbPath : path.resolve(envDbPath);
-  }
-
-  const envDataDir = process.env.THINKCOFFEE_DATA_DIR?.trim();
-  if (envDataDir) {
-    const resolvedDir = path.resolve(envDataDir);
-    ensureDir(resolvedDir);
-    return path.join(resolvedDir, 'data.sqlite');
-  }
-
-  return getDefaultDbPath();
-}
-
-function resolveLogging(options: DatabaseOptions): boolean {
-  if (typeof options.logging === 'boolean') {
-    return options.logging;
-  }
-
-  const envValue = process.env.THINKCOFFEE_DB_LOGGING?.trim().toLowerCase();
-  return envValue === '1' || envValue === 'true' || envValue === 'yes';
-}
-
-export async function getDatabase(options: DatabaseOptions = {}): Promise<DataSource> {
-  if (dataSource?.isInitialized) {
+export const getDatabase = async (): Promise<DataSource> => {
+  if (dataSource && dataSource.isInitialized) {
     return dataSource;
-  }
-
-  const dbPath = resolveDbPath(options);
-  if (dbPath !== ':memory:') {
-    const dir = path.dirname(dbPath);
-    ensureDir(dir);
   }
 
   dataSource = new DataSource({
     type: 'sqlite',
-    database: dbPath,
-    synchronize: true,
-    logging: resolveLogging(options),
-    entities: ALL_ENTITIES,
+    database: DB_PATH,
+    entities: [
+      User,
+      Workspace,
+      WorkspaceMember,
+      Project,
+      ChatHistory,
+      ContextEntry,
+      Decision,
+      ApiKey,
+      SyncConfig,
+      Agent,
+      Task,
+      Workflow,
+      SecurityAnalysis,
+      ExecutionLog,
+      OrchestratorPlanRecord,
+      OrchestratorRunRecord,
+      PolicyDecisionAudit,
+    ],
+    synchronize: process.env.NODE_ENV !== 'production',
+    logging: process.env.THINKCOFFEE_DB_LOGGING === 'true',
   });
 
-  await dataSource.initialize();
-  return dataSource;
-}
-
-export async function closeDatabase(): Promise<void> {
-  if (dataSource?.isInitialized) {
-    await dataSource.destroy();
-    dataSource = null;
+  if (!dataSource.isInitialized) {
+    await dataSource.initialize();
   }
-}
+
+  return dataSource;
+};
+
+export { DataSource };

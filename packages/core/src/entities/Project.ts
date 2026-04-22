@@ -1,6 +1,15 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, OneToMany } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+  ManyToOne,
+} from 'typeorm';
 import { ContextEntry } from './ContextEntry';
 import { Decision } from './Decision';
+import { Workspace } from './Workspace';
 
 @Entity()
 export class Project {
@@ -15,6 +24,14 @@ export class Project {
 
   @Column({ default: 'active' })
   status: string;
+
+  @ManyToOne(() => Workspace, (workspace) => workspace.projects, {
+    onDelete: 'CASCADE',
+  })
+  workspace: Workspace;
+
+  @Column('uuid', { nullable: true })
+  workspaceId: string | null;
 
   @Column({ type: 'simple-json', nullable: true })
   metadata: Record<string, any> | null;

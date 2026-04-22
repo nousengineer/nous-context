@@ -48,6 +48,7 @@ out/
 # Testing
 coverage/
 .nyc_output/
+tests/
 
 # TypeORM
 typeorm/

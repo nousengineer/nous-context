@@ -38,7 +38,7 @@ Build successful!
 
 ```bash
 cd packages/vscode
-pnpm dlx @vscode/vsce@3.4.0 package --no-dependencies --allow-missing-repository
+pnpm exec vsce package --no-dependencies
 ```
 
 Gera `thinkcoffee-vscode-1.0.0.vsix` no diretorio atual.
@@ -55,13 +55,12 @@ Reinicie o VS Code apos a instalacao.
 
 ```bash
 cd packages/vscode
-node esbuild.js && pnpm dlx @vscode/vsce@3.4.0 package --no-dependencies --allow-missing-repository && code --install-extension thinkcoffee-vscode-1.0.0.vsix --force
+node esbuild.js && pnpm exec vsce package --no-dependencies && code --install-extension thinkcoffee-vscode-1.0.0.vsix --force
 ```
 
 ## Notas
 
 - O `esbuild.js` copia automaticamente as dependencias nativas (sqlite3, bindings, file-uri-to-path) para `dist/native/`
 - O `vsce package` executa o script `vscode:prepublish` que roda `node esbuild.js` novamente
-- Use `@vscode/vsce@3.4.0` — versoes mais recentes podem ter problemas com dependencias (ex: `leven`)
+- Use `pnpm exec vsce` para garantir que o binario da versao do lockfile seja utilizado
 - A flag `--no-dependencies` evita bundlar dependencias do workspace no VSIX
-- A flag `--allow-missing-repository` ignora o aviso de campo `repository` ausente no package.json

@@ -3,8 +3,8 @@ src/**
 tsconfig.json
 esbuild.js
 *.ts
+node_modules/**
+package_log.txt
+packlog.txt
 !dist/**
-!node_modules/sqlite3/**
-!node_modules/bindings/**
-!node_modules/file-uri-to-path/**
 !resources/**

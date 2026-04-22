@@ -27,19 +27,28 @@ export function safePath(rootDir: string, relativePath: string): string {
     throw new Error('Path contains null byte: relative path is invalid.');
   }
 
+  // Block absolute paths, drive-letter paths and UNC/device style paths.
+  if (path.isAbsolute(relativePath) || /^[a-zA-Z]:/.test(relativePath) || /^[/\\]{2}/.test(relativePath)) {
+    throw new Error('Relative path must not be absolute or device-qualified.');
+  }
+
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  if (segments.some((segment) => segment === '..')) {
+    throw new Error(`Path traversal detected. Access to '${relativePath}' is denied.`);
+  }
+
   const resolvedRoot = path.resolve(rootDir);
-  const resolvedPath = path.resolve(resolvedRoot, relativePath);
+  const resolvedPath = path.resolve(resolvedRoot, ...segments);
   const normalizedPath = path.normalize(resolvedPath);
 
   // Ensure the resolved path is still within the root directory.
   // We check if it starts with the root path followed by a path separator
   // to prevent cases like '/root/dir' matching '/root/directory'.
   // On Windows, paths are case-insensitive.
-  const isSafe = process.platform === 'win32'
-    ? normalizedPath.toLowerCase().startsWith(resolvedRoot.toLowerCase() + path.sep) ||
-      normalizedPath.toLowerCase() === resolvedRoot.toLowerCase()
-    : normalizedPath.startsWith(resolvedRoot + path.sep) ||
-      normalizedPath === resolvedRoot;
+  const safeRoot = process.platform === 'win32' ? resolvedRoot.toLowerCase() : resolvedRoot;
+  const safePathCandidate = process.platform === 'win32' ? normalizedPath.toLowerCase() : normalizedPath;
+  const rootPrefix = safeRoot.endsWith(path.sep) ? safeRoot : safeRoot + path.sep;
+  const isSafe = safePathCandidate === safeRoot || safePathCandidate.startsWith(rootPrefix);
 
   if (!isSafe) {
     throw new Error(`Path traversal detected. Access to '${relativePath}' is denied.`);

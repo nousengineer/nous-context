@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
+import { getEventBus } from './events';
+
+const bus = getEventBus('pipeline-service');
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -269,6 +272,10 @@ export class PipelineService {
     };
 
     savePipeline(pipeline);
+    bus.emit('pipeline:created', {
+      projectId, pipelineId: id,
+      data: { objective, phaseCount: phases.length },
+    });
     return pipeline;
   }
 
@@ -341,6 +348,10 @@ export class PipelineService {
 
     p.updatedAt = new Date().toISOString();
     savePipeline(p);
+    bus.emit('pipeline:resumed', {
+      projectId, pipelineId,
+      phaseIndex: p.currentPhase,
+    });
     return p;
   }
 
@@ -390,6 +401,10 @@ export class PipelineService {
         task.startedAt = new Date().toISOString();
         p.updatedAt = new Date().toISOString();
         savePipeline(p);
+        bus.emit('pipeline:task:started', {
+          projectId, pipelineId, taskId,
+          data: { agent: task.agent, title: task.title },
+        });
         return p;
       }
     }
@@ -423,6 +438,18 @@ export class PipelineService {
     }
 
     savePipeline(p);
+    bus.emit('pipeline:task:completed', {
+      projectId, pipelineId, taskId,
+      phaseIndex: p.currentPhase,
+      data: { agent: task.agent, allDone, phaseStatus: phase.status },
+    });
+    if (allDone) {
+      bus.emit('pipeline:phase:completed', {
+        projectId, pipelineId,
+        phaseIndex: p.currentPhase,
+        data: { phaseName: phase.name, status: phase.status },
+      });
+    }
     return p;
   }
 
@@ -441,6 +468,14 @@ export class PipelineService {
         p.status = 'failed';
         p.updatedAt = new Date().toISOString();
         savePipeline(p);
+        bus.emit('pipeline:task:failed', {
+          projectId, pipelineId, taskId,
+          data: { agent: task.agent, reason },
+        });
+        bus.emit('pipeline:failed', {
+          projectId, pipelineId,
+          data: { reason, failedTask: task.agent },
+        });
         return p;
       }
     }
@@ -462,6 +497,14 @@ export class PipelineService {
 
     this._advancePhase(p);
     savePipeline(p);
+    bus.emit('pipeline:phase:approved', {
+      projectId, pipelineId,
+      phaseIndex: p.currentPhase - 1,
+      data: { approver, nextPhase: p.currentPhase, pipelineStatus: p.status },
+    });
+    if (p.status === 'completed') {
+      bus.emit('pipeline:completed', { projectId, pipelineId });
+    }
     return p;
   }
 
@@ -482,6 +525,11 @@ export class PipelineService {
     });
     p.updatedAt = new Date().toISOString();
     savePipeline(p);
+    bus.emit('pipeline:phase:rejected', {
+      projectId, pipelineId,
+      phaseIndex: p.currentPhase,
+      data: { feedback },
+    });
     return p;
   }
 

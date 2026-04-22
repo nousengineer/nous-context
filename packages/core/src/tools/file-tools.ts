@@ -62,10 +62,10 @@ export async function readFile(
   input: ReadFileInput
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   try {
     const absPath = safePath(ctx.workspaceRoot, input.path);
-    
+
     if (!fs.existsSync(absPath)) {
       return logAndReturn(ctx, 'read_file', input, startTime, {
         success: false,
@@ -94,12 +94,12 @@ export async function readFile(
 
     const content = fs.readFileSync(absPath, 'utf-8');
     const lines = content.split('\n');
-    
+
     const start = Math.max(1, input.startLine || 1);
     const end = Math.min(lines.length, input.endLine || lines.length);
     const slice = lines.slice(start - 1, end);
     const numbered = slice.map((l, i) => `${start + i}: ${l}`).join('\n');
-    
+
     const header = `File: ${input.path} (lines ${start}-${end} of ${lines.length})`;
     const output = `${header}\n\n${numbered}`;
 
@@ -134,7 +134,7 @@ export async function writeFile(
   input: WriteFileInput
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   try {
     const absPath = safePath(ctx.workspaceRoot, input.path);
     const fileExists = fs.existsSync(absPath);
@@ -145,7 +145,7 @@ export async function writeFile(
       const output = fileExists
         ? `[DRY-RUN] Would overwrite: ${input.path} (${input.content.length} bytes)`
         : `[DRY-RUN] Would create: ${input.path} (${input.content.length} bytes)`;
-      
+
       return logAndReturn(ctx, 'write_file', input, startTime, {
         success: true,
         output,
@@ -155,16 +155,18 @@ export async function writeFile(
 
     // Create snapshot before modifying existing file
     if (fileExists && ctx.snapshotService) {
-      await ctx.snapshotService.snapshotFile(
+      const originalContent = fs.readFileSync(absPath);
+      await ctx.snapshotService.saveFileContent(
         ctx.pipelineId,
         ctx.phaseIndex,
         ctx.phaseName,
         input.path,
-        'modified'
+        'modified',
+        originalContent
       );
     } else if (!fileExists && ctx.snapshotService) {
       // Record creation for rollback
-      await ctx.snapshotService.recordCreatedFile(
+      await ctx.snapshotService.recordFileCreation(
         ctx.pipelineId,
         ctx.phaseIndex,
         ctx.phaseName,
@@ -214,7 +216,7 @@ export async function deleteFile(
   input: DeleteFileInput
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   try {
     const absPath = safePath(ctx.workspaceRoot, input.path);
 
@@ -237,12 +239,14 @@ export async function deleteFile(
 
     // Create snapshot before deletion
     if (ctx.snapshotService) {
-      await ctx.snapshotService.snapshotFile(
+      const originalContent = fs.readFileSync(absPath);
+      await ctx.snapshotService.saveFileContent(
         ctx.pipelineId,
         ctx.phaseIndex,
         ctx.phaseName,
         input.path,
-        'deleted'
+        'deleted',
+        originalContent
       );
     }
 
@@ -283,7 +287,7 @@ export async function listFiles(
   input: ListFilesInput
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   try {
     const absPath = safePath(ctx.workspaceRoot, input.path);
 
@@ -306,10 +310,10 @@ export async function listFiles(
 
     const entries: string[] = [];
     const maxDepth = input.maxDepth ?? (input.recursive ? 5 : 1);
-    
+
     collectEntries(absPath, input.path || '.', 0, maxDepth, entries, input.recursive ?? false);
 
-    const output = entries.length > 0 
+    const output = entries.length > 0
       ? entries.join('\n')
       : '(empty directory)';
 
@@ -339,8 +343,8 @@ function collectEntries(
   const dirEntries = fs.readdirSync(absPath, { withFileTypes: true });
 
   for (const entry of dirEntries) {
-    const entryRelPath = relativePath === '.' 
-      ? entry.name 
+    const entryRelPath = relativePath === '.'
+      ? entry.name
       : path.join(relativePath, entry.name);
 
     if (entry.isDirectory()) {
@@ -381,7 +385,7 @@ export async function searchCode(
   input: SearchCodeInput
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   try {
     const results: string[] = [];
     const maxResults = input.maxResults ?? 100;
@@ -450,7 +454,7 @@ function searchInDirectory(
       try {
         const content = fs.readFileSync(entryAbsPath, 'utf-8');
         const lines = content.split('\n');
-        
+
         for (let i = 0; i < lines.length && results.length < maxResults; i++) {
           if (regex.test(lines[i])) {
             results.push(`${entryRelPath}:${i + 1}: ${lines[i].trim()}`);
@@ -466,13 +470,13 @@ function searchInDirectory(
 function matchesGlob(filePath: string, glob: string): boolean {
   // Simple glob matching
   if (glob === '**/*' || glob === '*') return true;
-  
+
   // Handle **/*.ext pattern
   const extMatch = glob.match(/^\*\*\/\*(\.\w+)$/);
   if (extMatch) {
     return filePath.endsWith(extMatch[1]);
   }
-  
+
   // Handle *.ext pattern
   const simpleExtMatch = glob.match(/^\*(\.\w+)$/);
   if (simpleExtMatch) {

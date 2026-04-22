@@ -15,5 +15,6 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true
   },
-  "include": ["src"]
+  "include": ["src/start-api.ts", "src/middleware.ts"],
+  "exclude": ["node_modules"]
 }

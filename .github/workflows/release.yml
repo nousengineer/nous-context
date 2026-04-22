@@ -26,6 +26,10 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
@@ -144,13 +148,13 @@ jobs:
       - name: Publish packages
         run: |
           echo "Publishing @thinkcoffee/core..."
-          pnpm --filter @thinkcoffee/core publish --no-git-checks --access public || true
+          pnpm --filter @thinkcoffee/core publish --no-git-checks --access public
 
           echo "Publishing @thinkcoffee/cli..."
-          pnpm --filter @thinkcoffee/cli publish --no-git-checks --access public || true
+          pnpm --filter @thinkcoffee/cli publish --no-git-checks --access public
 
           echo "Publishing @thinkcoffee/mcp-server..."
-          pnpm --filter @thinkcoffee/mcp-server publish --no-git-checks --access public || true
+          pnpm --filter @thinkcoffee/mcp-server publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -237,15 +241,23 @@ jobs:
       - name: Build extension
         run: pnpm --filter thinkcoffee-vscode build
 
+      - name: Typecheck extension
+        run: pnpm --filter thinkcoffee-vscode exec tsc --noEmit
+
       - name: Package VSIX
+        run: pnpm --filter thinkcoffee-vscode package
+
+      - name: Validate VSCE token
         run: |
-          cd packages/vscode
-          pnpm exec vsce package --allow-missing-repository
+          if [ -z "${{ secrets.VSCE_PAT }}" ]; then
+            echo "::error::VSCE_PAT is not configured"
+            exit 1
+          fi
 
       - name: Publish to VS Code Marketplace
         run: |
           cd packages/vscode
-          pnpm exec vsce publish --allow-missing-repository -p ${{ secrets.VSCE_PAT }} || echo "::warning::VSCE publish failed"
+          pnpm exec vsce publish -p ${{ secrets.VSCE_PAT }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
