@@ -1,0 +1,26 @@
+{
+  "name": "@thinkcoffee/core",
+  "version": "1.0.0",
+  "description": "Core library for ThinkCoffee - entities, services, and business logic",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "reflect-metadata": "^0.1.13",
+    "sqlite3": "^5.1.7",
+    "typeorm": "^0.3.28",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "@vitest/coverage-v8": "^1.2.0",
+    "typescript": "^5.1.6",
+    "vitest": "^1.2.0"
+  }
+}

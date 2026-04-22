@@ -1,0 +1,29 @@
+{
+  "name": "@thinkcoffee/mcp-server",
+  "version": "1.0.0",
+  "description": "ThinkCoffee MCP Server - AI context management via Model Context Protocol",
+  "main": "dist/index.js",
+  "bin": {
+    "thinkcoffee-mcp": "dist/index.js",
+    "thinkcoffee-api": "dist/start-api.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "start:api": "node dist/start-api.js",
+    "dev:api": "npx tsx src/start-api.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.12",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@thinkcoffee/core": "workspace:*",
+    "hono": "^4.12.10",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.39",
+    "tsx": "^4.7.0",
+    "typescript": "^5.1.6"
+  }
+}

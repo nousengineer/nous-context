@@ -1,0 +1,35 @@
+{
+  "name": "thinkcoffee",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI Context Management Platform - MCP Server, CLI, and VS Code Extension",
+  "scripts": {
+    "build": "pnpm -r build",
+    "build:core": "pnpm --filter @thinkcoffee/core build",
+    "build:mcp": "pnpm --filter @thinkcoffee/mcp-server build",
+    "build:cli": "pnpm --filter @thinkcoffee/cli build",
+    "build:vscode": "pnpm --filter thinkcoffee-vscode build",
+    "dev:core": "pnpm --filter @thinkcoffee/core dev",
+    "dev:mcp": "pnpm --filter @thinkcoffee/mcp-server dev",
+    "dev:cli": "pnpm --filter @thinkcoffee/cli dev",
+    "test": "node scripts/test-integration.js",
+    "test:unit": "pnpm exec vitest run --coverage",
+    "ci:install": "pnpm install --frozen-lockfile",
+    "ci:typecheck": "pnpm --filter @thinkcoffee/core exec tsc --noEmit && pnpm --filter @thinkcoffee/cli exec tsc --noEmit && pnpm --filter @thinkcoffee/mcp-server exec tsc --noEmit && pnpm --filter thinkcoffee-vscode exec tsc --noEmit",
+    "docker:build:mcp": "docker build -f Dockerfile -t thinkcoffee/mcp-server:local .",
+    "docker:build:cli": "docker build -f Dockerfile.cli -t thinkcoffee/cli:local .",
+    "compose:cli": "docker compose --profile cli run --rm cli",
+    "compose:mcp": "docker compose --profile mcp run --rm mcp-server"
+  },
+  "keywords": [
+    "ai",
+    "context",
+    "management",
+    "mcp",
+    "model-context-protocol",
+    "cli",
+    "developer-tools"
+  ],
+  "author": "ThinkCoffee Team",
+  "license": "MIT"
+}
