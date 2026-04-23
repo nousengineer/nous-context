@@ -163,9 +163,19 @@ export async function routeAuto(
 ): Promise<AutoRouteResult> {
     const router = await findModel(ROUTER_MODEL_FAMILY);
     if (!router) {
-        throw new Error(
-            `Router model '${ROUTER_MODEL_FAMILY}' not available. Ensure Raptor mini is enabled in Copilot.`,
+        // Router model unavailable — pick first available curated model as direct fallback
+        const all = await vscode.lm.selectChatModels();
+        const fallback = all.find((m) =>
+            CURATED_FAMILIES.some((f) => m.family.toLowerCase() === f.toLowerCase()),
         );
+        if (!fallback) {
+            throw new Error('No LM models available. Ensure GitHub Copilot is signed in.');
+        }
+        return {
+            model: fallback,
+            messages: toVSCodeMessages(ollamaMessages),
+            selectedModelName: fallback.family,
+        };
     }
 
     const availableList = CURATED_FAMILIES.join(', ');
@@ -206,9 +216,8 @@ export async function routeAuto(
     );
 
     let routingText = '';
-    for await (const chunk of routerResponse.stream) {
-        const text = getChunkText(chunk);
-        if (text) routingText += text;
+    for await (const text of routerResponse.text) {
+        routingText += text;
     }
 
     // Strip markdown code fences if the model wrapped the JSON
