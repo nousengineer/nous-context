@@ -1,15 +1,24 @@
 import * as vscode from 'vscode';
 
 interface ChatOutboundMessage {
-  type: 'chat:status' | 'chat:assistant' | 'chat:error' | 'chat:new-chat' | 'chat:load-history';
+  type:
+  | 'chat:status'
+  | 'chat:assistant'
+  | 'chat:error'
+  | 'chat:new-chat'
+  | 'chat:load-history'
+  | 'chat:thinking'
+  | 'chat:step'
+  | 'chat:done'
+  | 'chat:capability-result';
   text?: string;
   chatId?: string;
+  meta?: Record<string, unknown>;
 }
 
 export class ChatSidebarProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'thinkcoffee.chat';
   private view?: vscode.WebviewView;
-  private pendingMessages: ChatOutboundMessage[] = [];
 
   postStatus(text: string): void {
     this.postToWebview({ type: 'chat:status', text });
@@ -31,799 +40,49 @@ export class ChatSidebarProvider implements vscode.WebviewViewProvider {
     this.postToWebview({ type: 'chat:load-history', text: historyJson });
   }
 
+  postThinking(text: string): void {
+    this.postToWebview({ type: 'chat:thinking', text });
+  }
+
+  postStep(text: string): void {
+    this.postToWebview({ type: 'chat:step', text });
+  }
+
+  postDone(): void {
+    this.postToWebview({ type: 'chat:done' });
+  }
+
+  postCapabilityResult(text: string, meta?: Record<string, unknown>): void {
+    this.postToWebview({ type: 'chat:capability-result', text, meta });
+  }
+
   private postToWebview(message: ChatOutboundMessage): void {
     if (!this.view) {
-      this.pendingMessages.push(message);
       return;
     }
     void this.view.webview.postMessage(message);
   }
 
-  private flushPending(): void {
-    for (const msg of this.pendingMessages) {
-      if (this.view) {
-        void this.view.webview.postMessage(msg);
-      }
-    }
-    this.pendingMessages = [];
-  }
-
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
 
-    view.webview.options = { enableScripts: true };
+    view.webview.options = {
+      enableScripts: true,
+    };
 
-    view.webview.onDidReceiveMessage(async message => {
-      if (message?.type === 'ready') {
-        this.flushPending();
-        return;
+    view.webview.onDidReceiveMessage(async (message) => {
+      if (!message || typeof message !== 'object') return;
+      if (message.type === 'ask') {
+        await vscode.commands.executeCommand('thinkcoffee.chat.ask', message);
+      } else if (message.type === 'capability') {
+        await vscode.commands.executeCommand('thinkcoffee.chat.capability', message);
+      } else if (message.type === 'stop') {
+        await vscode.commands.executeCommand('thinkcoffee.stopAgents');
       }
-      if (message?.type !== 'ask') {
-        return;
-      }
-      await vscode.commands.executeCommand('thinkcoffee.chat.ask', message);
     });
 
     const nonce = getNonce();
-
-    view.webview.html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{
-  font-family:var(--vscode-font-family);
-  font-size:var(--vscode-font-size);
-  color:var(--vscode-foreground);
-  background:var(--vscode-sideBar-background);
-  height:100vh;
-  display:flex;
-  flex-direction:column;
-  overflow:hidden;
-}
-
-/* ── SESSIONS HEADER ── */
-.sessions-header{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:8px 12px 6px;
-  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;
-  color:var(--vscode-sideBarSectionHeader-foreground,var(--vscode-foreground));
-  border-bottom:1px solid var(--vscode-sideBarSectionHeader-border,transparent);
-  flex-shrink:0;
-}
-.sessions-actions{display:flex;gap:2px}
-.icon-btn{
-  background:transparent;border:0;color:var(--vscode-icon-foreground,var(--vscode-foreground));
-  width:22px;height:22px;border-radius:4px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;font-size:14px;
-}
-.icon-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
-
-/* ── SESSION LIST ── */
-.session-list{
-  flex:1;overflow-y:auto;padding:2px 0;
-  min-height:0;
-}
-.session-item{
-  display:flex;align-items:flex-start;gap:8px;
-  padding:6px 12px;cursor:pointer;
-  border-left:2px solid transparent;
-}
-.session-item:hover{background:var(--vscode-list-hoverBackground)}
-.session-item.active{
-  background:var(--vscode-list-activeSelectionBackground);
-  color:var(--vscode-list-activeSelectionForeground);
-  border-left-color:var(--vscode-focusBorder);
-}
-.session-dot{
-  width:6px;height:6px;border-radius:50%;
-  margin-top:5px;flex-shrink:0;
-  background:var(--vscode-charts-blue,#3794ff);
-}
-.session-dot.idle{background:var(--vscode-foreground);opacity:.3}
-.session-info{flex:1;min-width:0}
-.session-title{
-  font-size:12px;line-height:1.4;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.session-meta{
-  font-size:11px;opacity:.6;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-}
-.session-delete{
-  background:transparent;border:0;color:var(--vscode-foreground);
-  opacity:0;cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;
-  flex-shrink:0;
-}
-.session-item:hover .session-delete{opacity:.5}
-.session-delete:hover{opacity:1!important;background:var(--vscode-toolbar-hoverBackground)}
-
-.more-link{
-  padding:4px 12px 8px;font-size:11px;
-  color:var(--vscode-textLink-foreground);cursor:pointer;
-  display:flex;justify-content:space-between;
-}
-.more-link:hover{text-decoration:underline}
-
-/* ── MESSAGES AREA ── */
-.chat-area{
-  flex:1;overflow-y:auto;padding:12px;
-  display:flex;flex-direction:column;gap:12px;
-  min-height:0;
-}
-.chat-area.empty-state{
-  justify-content:center;align-items:center;
-  color:var(--vscode-descriptionForeground);font-size:12px;
-}
-.msg{
-  font-size:12px;line-height:1.5;
-  white-space:pre-wrap;word-break:break-word;
-}
-.msg-row{display:flex;gap:8px;align-items:flex-start}
-.msg-avatar{
-  width:20px;height:20px;border-radius:50%;flex-shrink:0;
-  display:flex;align-items:center;justify-content:center;
-  font-size:11px;font-weight:700;
-  margin-top:2px;
-}
-.msg-avatar.user-av{
-  background:var(--vscode-charts-blue,#3794ff);color:#fff;
-}
-.msg-avatar.pm-av{
-  background:var(--vscode-charts-orange,#d18616);color:#fff;
-}
-.msg-content{flex:1;min-width:0}
-.msg-role{font-size:11px;font-weight:600;margin-bottom:2px}
-.msg-text{font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word}
-.msg-error .msg-text{color:var(--vscode-errorForeground)}
-.status-bar{
-  font-size:11px;padding:4px 12px;
-  color:var(--vscode-descriptionForeground);
-  flex-shrink:0;
-  display:flex;align-items:center;gap:6px;
-}
-.status-bar .spinner{
-  width:12px;height:12px;border:2px solid var(--vscode-foreground);
-  border-top-color:transparent;border-radius:50%;
-  animation:spin .8s linear infinite;display:none;
-}
-.status-bar.busy .spinner{display:inline-block}
-.status-bar.busy{color:var(--vscode-charts-yellow,#cca700)}
-@keyframes spin{to{transform:rotate(360deg)}}
-
-/* ── COMPOSER (bottom) ── */
-.composer{
-  border-top:1px solid var(--vscode-panel-border,var(--vscode-sideBarSectionHeader-border,#333));
-  padding:8px 10px 6px;
-  flex-shrink:0;
-  display:flex;flex-direction:column;gap:6px;
-  background:var(--vscode-sideBar-background);
-}
-.composer-input{
-  border:1px solid var(--vscode-input-border);
-  border-radius:8px;
-  background:var(--vscode-input-background);
-  padding:8px 10px;
-  display:flex;flex-direction:column;gap:4px;
-}
-.composer-input:focus-within{
-  border-color:var(--vscode-focusBorder);
-}
-.prompt{
-  width:100%;min-height:36px;max-height:120px;resize:none;
-  background:transparent;color:var(--vscode-input-foreground);
-  border:0;outline:none;
-  font-size:13px;line-height:1.4;font-family:var(--vscode-font-family);
-}
-.chips{display:flex;flex-wrap:wrap;gap:4px}
-.chip{
-  font-size:10px;padding:2px 6px;
-  border-radius:3px;
-  background:var(--vscode-badge-background);
-  color:var(--vscode-badge-foreground);
-  display:flex;align-items:center;gap:4px;
-}
-.chip-remove{cursor:pointer;opacity:.7;font-size:12px}
-.chip-remove:hover{opacity:1}
-/* ── @ mention autocomplete ── */
-.mention-popup{
-  position:absolute;bottom:100%;left:0;right:0;
-  background:var(--vscode-editorSuggestWidget-background,var(--vscode-dropdown-background));
-  border:1px solid var(--vscode-editorSuggestWidget-border,var(--vscode-dropdown-border));
-  border-radius:6px;
-  box-shadow:0 4px 12px rgba(0,0,0,.3);
-  max-height:200px;overflow-y:auto;
-  display:none;z-index:10;
-  padding:4px 0;
-}
-.mention-popup.visible{display:block}
-.mention-item{
-  padding:5px 10px;cursor:pointer;
-  font-size:12px;color:var(--vscode-foreground);
-  display:flex;align-items:center;gap:8px;
-}
-.mention-item:hover,.mention-item.active{
-  background:var(--vscode-list-hoverBackground);
-}
-.mention-item .mi-role{
-  font-weight:600;color:var(--vscode-textLink-foreground);
-  min-width:110px;
-}
-.mention-item .mi-desc{
-  opacity:.7;font-size:11px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-}
-.composer-input{position:relative}
-.composer-toolbar{
-  display:flex;align-items:center;gap:2px;
-}
-.tb-btn{
-  background:transparent;border:0;
-  color:var(--vscode-icon-foreground,var(--vscode-foreground));
-  width:24px;height:24px;border-radius:4px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;
-  font-size:14px;
-}
-.tb-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
-.tb-btn.active{color:var(--vscode-focusBorder)}
-.tb-spacer{flex:1}
-.tb-label{
-  font-size:11px;color:var(--vscode-descriptionForeground);
-  padding:0 4px;cursor:default;
-  display:flex;align-items:center;gap:2px;
-}
-.send-btn{
-  background:var(--vscode-button-background);color:var(--vscode-button-foreground);
-  border:0;border-radius:4px;width:24px;height:24px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;font-size:14px;
-}
-.send-btn:hover{background:var(--vscode-button-hoverBackground)}
-.send-btn:disabled{opacity:.4;cursor:default}
-</style>
-</head>
-<body>
-
-<!-- SESSIONS VIEW -->
-<div id="sessionsView" style="display:flex;flex-direction:column;height:100%">
-  <div class="sessions-header">
-    <span>Sessions</span>
-    <div class="sessions-actions">
-      <button class="icon-btn" id="newChatBtn" title="New Chat">+</button>
-    </div>
-  </div>
-  <div class="session-list" id="sessionList"></div>
-</div>
-
-<!-- CHAT VIEW -->
-<div id="chatView" style="display:none;flex-direction:column;height:100%">
-  <div class="sessions-header">
-    <button class="icon-btn" id="backBtn" title="Back to sessions">\u2190</button>
-    <span id="chatTitle" style="flex:1;text-align:center;text-transform:none;font-weight:500;font-size:12px"></span>
-    <button class="icon-btn" id="newChatBtn2" title="New Chat">+</button>
-  </div>
-  <div class="chat-area empty-state" id="messages">
-    <span>Start a new conversation</span>
-  </div>
-  <div class="status-bar" id="statusBar">
-    <span class="spinner"></span>
-    <span id="statusText">Ready</span>
-  </div>
-  <div class="composer">
-    <div class="composer-input">
-      <div id="mentionPopup" class="mention-popup"></div>
-      <textarea id="chatPrompt" class="prompt" placeholder="Use @agent to call a specific AI, or just describe what to build" rows="1"></textarea>
-      <div id="chips" class="chips"></div>
-    </div>
-    <div class="composer-toolbar">
-      <button class="tb-btn" id="attachBtn" title="Attach active editor">+</button>
-      <button class="tb-btn" id="imageBtn" title="Attach image">\u{1F4CE}</button>
-      <span class="tb-label">ThinkCoffee PM</span>
-      <span class="tb-spacer"></span>
-      <button class="send-btn" id="sendBtn" title="Send" disabled>\u2191</button>
-    </div>
-  </div>
-</div>
-
-<script nonce="${nonce}">
-(function(){
-  const vscode = acquireVsCodeApi();
-
-  // ── State ──
-  let state = vscode.getState() || { chats: {}, currentChatId: null };
-  let includeActiveEditor = false;
-  let images = [];
-
-  function persist() { vscode.setState(state); }
-
-  // ── DOM refs ──
-  const sessionsView = document.getElementById('sessionsView');
-  const chatView = document.getElementById('chatView');
-  const sessionList = document.getElementById('sessionList');
-  const messagesEl = document.getElementById('messages');
-  const statusText = document.getElementById('statusText');
-  const statusBar = document.getElementById('statusBar');
-  const chatTitle = document.getElementById('chatTitle');
-  const input = document.getElementById('chatPrompt');
-  const sendBtn = document.getElementById('sendBtn');
-  const chipsEl = document.getElementById('chips');
-
-  // ── Helpers ──
-  function genId() { return 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); }
-
-  function timeAgo(ts) {
-    const mins = Math.floor((Date.now() - ts) / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return mins + ' min ago';
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return hrs + 'h ago';
-    return Math.floor(hrs / 24) + 'd ago';
-  }
-
-  function escapeHtml(t) {
-    return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
-  // ── Sessions View ──
-  function showSessions() {
-    sessionsView.style.display = 'flex';
-    chatView.style.display = 'none';
-    renderSessionList();
-  }
-
-  function showChat(chatId) {
-    if (!state.chats[chatId]) return;
-    state.currentChatId = chatId;
-    persist();
-    sessionsView.style.display = 'none';
-    chatView.style.display = 'flex';
-    renderChat();
-  }
-
-  function renderSessionList() {
-    sessionList.innerHTML = '';
-    const sorted = Object.values(state.chats).sort((a,b) => b.createdAt - a.createdAt);
-    const visible = sorted.slice(0, 5);
-    const remaining = sorted.length - visible.length;
-
-    for (const chat of visible) {
-      const hasMessages = chat.messages && chat.messages.length > 0;
-      const lastMsg = hasMessages ? chat.messages[chat.messages.length - 1] : null;
-      const item = document.createElement('div');
-      item.className = 'session-item' + (chat.id === state.currentChatId ? ' active' : '');
-
-      const dot = document.createElement('div');
-      dot.className = 'session-dot' + (hasMessages ? '' : ' idle');
-
-      const info = document.createElement('div');
-      info.className = 'session-info';
-
-      const title = document.createElement('div');
-      title.className = 'session-title';
-      title.textContent = chat.title || 'New Chat';
-
-      const meta = document.createElement('div');
-      meta.className = 'session-meta';
-      meta.textContent = lastMsg ? lastMsg.text.slice(0,50) : timeAgo(chat.createdAt);
-
-      info.appendChild(title);
-      info.appendChild(meta);
-
-      const del = document.createElement('button');
-      del.className = 'session-delete';
-      del.textContent = '\u00d7';
-      del.title = 'Delete';
-      del.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
-
-      item.appendChild(dot);
-      item.appendChild(info);
-      item.appendChild(del);
-      item.addEventListener('click', () => showChat(chat.id));
-      sessionList.appendChild(item);
-    }
-
-    if (remaining > 0) {
-      const more = document.createElement('div');
-      more.className = 'more-link';
-      more.innerHTML = '<span>MORE</span><span>' + remaining + '</span>';
-      more.addEventListener('click', () => {
-        // Show all sessions
-        renderAllSessions();
-      });
-      sessionList.appendChild(more);
-    }
-  }
-
-  function renderAllSessions() {
-    sessionList.innerHTML = '';
-    const sorted = Object.values(state.chats).sort((a,b) => b.createdAt - a.createdAt);
-    for (const chat of sorted) {
-      const hasMessages = chat.messages && chat.messages.length > 0;
-      const lastMsg = hasMessages ? chat.messages[chat.messages.length - 1] : null;
-      const item = document.createElement('div');
-      item.className = 'session-item' + (chat.id === state.currentChatId ? ' active' : '');
-
-      const dot = document.createElement('div');
-      dot.className = 'session-dot' + (hasMessages ? '' : ' idle');
-
-      const info = document.createElement('div');
-      info.className = 'session-info';
-
-      const title = document.createElement('div');
-      title.className = 'session-title';
-      title.textContent = chat.title || 'New Chat';
-
-      const meta = document.createElement('div');
-      meta.className = 'session-meta';
-      meta.textContent = lastMsg ? lastMsg.text.slice(0,50) : timeAgo(chat.createdAt);
-
-      info.appendChild(title);
-      info.appendChild(meta);
-
-      const del = document.createElement('button');
-      del.className = 'session-delete';
-      del.textContent = '\u00d7';
-      del.title = 'Delete';
-      del.addEventListener('click', (e) => { e.stopPropagation(); deleteChat(chat.id); });
-
-      item.appendChild(dot);
-      item.appendChild(info);
-      item.appendChild(del);
-      item.addEventListener('click', () => showChat(chat.id));
-      sessionList.appendChild(item);
-    }
-  }
-
-  // ── Chat View ──
-  function renderChat() {
-    const chat = state.chats[state.currentChatId];
-    if (!chat) return;
-
-    chatTitle.textContent = chat.title || 'New Chat';
-    messagesEl.innerHTML = '';
-
-    if (!chat.messages || chat.messages.length === 0) {
-      messagesEl.className = 'chat-area empty-state';
-      messagesEl.innerHTML = '<span>Start a new conversation</span>';
-    } else {
-      messagesEl.className = 'chat-area';
-      for (const m of chat.messages) {
-        appendMsgDom(m.role, m.text);
-      }
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-  }
-
-  function appendMsgDom(role, text) {
-    const row = document.createElement('div');
-    row.className = 'msg-row' + (role === 'error' ? ' msg-error' : '');
-
-    const av = document.createElement('div');
-    const isAgent = role !== 'user' && role !== 'error' && role !== 'assistant';
-    av.className = 'msg-avatar ' + (role === 'user' ? 'user-av' : 'pm-av');
-    av.textContent = role === 'user' ? 'U' : role === 'error' ? '!' : isAgent ? role.slice(0,2).toUpperCase() : 'PM';
-
-    const content = document.createElement('div');
-    content.className = 'msg-content';
-
-    const roleEl = document.createElement('div');
-    roleEl.className = 'msg-role';
-    const roleLabels = { user:'You', error:'Error', assistant:'ThinkCoffee PM' };
-    roleEl.textContent = roleLabels[role] || ('@' + role);
-
-    const textEl = document.createElement('div');
-    textEl.className = 'msg-text';
-    textEl.textContent = text;
-
-    content.appendChild(roleEl);
-    content.appendChild(textEl);
-    row.appendChild(av);
-    row.appendChild(content);
-    messagesEl.appendChild(row);
-  }
-
-  // ── Chat CRUD ──
-  function createNewChat() {
-    const id = genId();
-    const title = new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-    state.chats[id] = { id, title, messages: [], createdAt: Date.now() };
-    state.currentChatId = id;
-    persist();
-    showChat(id);
-  }
-
-  function deleteChat(chatId) {
-    delete state.chats[chatId];
-    if (state.currentChatId === chatId) {
-      const keys = Object.keys(state.chats);
-      state.currentChatId = keys.length > 0 ? keys[0] : null;
-    }
-    persist();
-    if (chatView.style.display !== 'none' && (!state.currentChatId || !state.chats[state.currentChatId])) {
-      showSessions();
-    } else if (chatView.style.display !== 'none') {
-      renderChat();
-    }
-    renderSessionList();
-  }
-
-  function addMessage(role, text) {
-    const chat = state.chats[state.currentChatId];
-    if (!chat) return;
-    chat.messages.push({ role, text });
-    // Update title from first user message
-    if (role === 'user' && chat.messages.filter(m => m.role === 'user').length === 1) {
-      chat.title = text.slice(0, 60) || chat.title;
-    }
-    persist();
-    if (chatView.style.display !== 'none') {
-      if (messagesEl.classList.contains('empty-state')) {
-        messagesEl.className = 'chat-area';
-        messagesEl.innerHTML = '';
-      }
-      appendMsgDom(role, text);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-  }
-
-  // ── Status ──
-  let statusTimer = null;
-  function setStatus(text, busy) {
-    statusText.textContent = text;
-    statusBar.className = 'status-bar' + (busy ? ' busy' : '');
-    // Clear any existing elapsed timer
-    if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
-    if (busy && text.includes('working')) {
-      // Show elapsed seconds in status bar
-      const start = Date.now();
-      statusTimer = setInterval(() => {
-        const secs = Math.round((Date.now() - start) / 1000);
-        const base = text.replace(/\(\d+s.*\)/, '').trim();
-        statusText.textContent = base + ' (' + secs + 's)';
-      }, 1000);
-    }
-  }
-
-  // ── Composer ──
-  function updateSendBtn() {
-    const hasContent = (input.value || '').trim().length > 0 || includeActiveEditor || images.length > 0;
-    sendBtn.disabled = !hasContent;
-  }
-
-  function renderChips() {
-    chipsEl.innerHTML = '';
-    if (includeActiveEditor) {
-      const c = document.createElement('span');
-      c.className = 'chip';
-      c.innerHTML = 'Active File <span class="chip-remove">\u00d7</span>';
-      c.querySelector('.chip-remove').addEventListener('click', () => { includeActiveEditor = false; renderChips(); updateSendBtn(); });
-      chipsEl.appendChild(c);
-    }
-    for (let i = 0; i < images.length; i++) {
-      const c = document.createElement('span');
-      c.className = 'chip';
-      c.innerHTML = escapeHtml(images[i].name || 'image') + ' <span class="chip-remove">\u00d7</span>';
-      const idx = i;
-      c.querySelector('.chip-remove').addEventListener('click', () => { images.splice(idx, 1); renderChips(); updateSendBtn(); });
-      chipsEl.appendChild(c);
-    }
-  }
-
-  function submit() {
-    const prompt = (input.value || '').trim();
-    if (!prompt && !includeActiveEditor && images.length === 0) return;
-
-    // Ensure we're in chat view
-    if (!state.currentChatId || !state.chats[state.currentChatId]) {
-      createNewChat();
-    }
-
-    const preview = prompt || (includeActiveEditor ? '[Active editor file]' : '[Image attachment]');
-    addMessage('user', preview);
-    setStatus('PM is thinking\u2026', true);
-
-    vscode.postMessage({ type: 'ask', prompt, includeActiveEditor, images });
-
-    input.value = '';
-    images = [];
-    includeActiveEditor = false;
-    renderChips();
-    updateSendBtn();
-    autoResize();
-    input.focus();
-  }
-
-  function autoResize() {
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-  }
-
-  // ── Events ──
-  document.getElementById('newChatBtn').addEventListener('click', createNewChat);
-  document.getElementById('newChatBtn2').addEventListener('click', createNewChat);
-  document.getElementById('backBtn').addEventListener('click', showSessions);
-  sendBtn.addEventListener('click', submit);
-
-  document.getElementById('attachBtn').addEventListener('click', () => {
-    includeActiveEditor = !includeActiveEditor;
-    document.getElementById('attachBtn').classList.toggle('active', includeActiveEditor);
-    renderChips();
-    updateSendBtn();
-  });
-
-  document.getElementById('imageBtn').addEventListener('click', () => {
-    // Trigger paste hint
-    input.focus();
-  });
-
-  // ── @Mention autocomplete ──
-  const AGENTS = [
-    { role: 'architect', label: 'Architect', desc: 'Design architecture & tech stack' },
-    { role: 'backend', label: 'Backend', desc: 'Implement APIs & business logic' },
-    { role: 'frontend', label: 'Frontend', desc: 'UI components & pages' },
-    { role: 'devops', label: 'DevOps', desc: 'CI/CD & infrastructure' },
-    { role: 'qa', label: 'QA', desc: 'Tests & bug reports' },
-    { role: 'code-review', label: 'Code Review', desc: 'Review code quality & security' },
-    { role: 'organizer', label: 'Organizer', desc: 'Organize project structure' },
-    { role: 'git', label: 'Git', desc: 'Commits, branches & PRs' },
-    { role: 'dead-code', label: 'Dead Code', desc: 'Remove unused code' },
-    { role: 'troubleshooter', label: 'Troubleshooter', desc: 'Diagnose & fix failures' },
-  ];
-  const mentionPopup = document.getElementById('mentionPopup');
-  let mentionActive = false;
-  let mentionStart = -1;
-  let mentionIdx = 0;
-  let filteredAgents = [];
-
-  function getMentionQuery() {
-    const pos = input.selectionStart;
-    const text = input.value.slice(0, pos);
-    const at = text.lastIndexOf('@');
-    if (at < 0) return null;
-    // Make sure @ is at start or after whitespace
-    if (at > 0 && !/\s/.test(text[at - 1])) return null;
-    return { start: at, query: text.slice(at + 1).toLowerCase() };
-  }
-
-  function renderMentionPopup() {
-    const m = getMentionQuery();
-    if (!m) { hideMentions(); return; }
-    mentionStart = m.start;
-    filteredAgents = AGENTS.filter(a =>
-      a.role.includes(m.query) || a.label.toLowerCase().includes(m.query) || a.desc.toLowerCase().includes(m.query)
-    );
-    if (filteredAgents.length === 0) { hideMentions(); return; }
-    mentionActive = true;
-    mentionIdx = 0;
-    mentionPopup.innerHTML = '';
-    filteredAgents.forEach((a, i) => {
-      const el = document.createElement('div');
-      el.className = 'mention-item' + (i === 0 ? ' active' : '');
-      el.innerHTML = '<span class="mi-role">@' + escapeHtml(a.role) + '</span><span class="mi-desc">' + escapeHtml(a.desc) + '</span>';
-      el.addEventListener('mousedown', e => { e.preventDefault(); selectMention(i); });
-      mentionPopup.appendChild(el);
-    });
-    mentionPopup.classList.add('visible');
-  }
-
-  function hideMentions() {
-    mentionActive = false;
-    mentionPopup.classList.remove('visible');
-    mentionPopup.innerHTML = '';
-  }
-
-  function selectMention(idx) {
-    const agent = filteredAgents[idx];
-    if (!agent) return;
-    const before = input.value.slice(0, mentionStart);
-    const after = input.value.slice(input.selectionStart);
-    input.value = before + '@' + agent.role + ' ' + after;
-    const cursor = before.length + agent.role.length + 2;
-    input.setSelectionRange(cursor, cursor);
-    hideMentions();
-    updateSendBtn();
-    input.focus();
-  }
-
-  input.addEventListener('input', () => { updateSendBtn(); autoResize(); renderMentionPopup(); });
-  input.addEventListener('keydown', e => {
-    if (mentionActive) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        mentionIdx = (mentionIdx + 1) % filteredAgents.length;
-        mentionPopup.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('active', i === mentionIdx));
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        mentionIdx = (mentionIdx - 1 + filteredAgents.length) % filteredAgents.length;
-        mentionPopup.querySelectorAll('.mention-item').forEach((el, i) => el.classList.toggle('active', i === mentionIdx));
-        return;
-      }
-      if (e.key === 'Tab' || e.key === 'Enter') {
-        e.preventDefault();
-        selectMention(mentionIdx);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        hideMentions();
-        return;
-      }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
-  });
-  input.addEventListener('blur', () => { setTimeout(hideMentions, 150); });
-
-  input.addEventListener('paste', event => {
-    const cb = event.clipboardData;
-    if (!cb || !cb.items) return;
-    let found = false;
-    for (const item of cb.items) {
-      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
-      const file = item.getAsFile();
-      if (!file) continue;
-      found = true;
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string' && images.length < 5) {
-          images.push({ name: file.name || 'pasted-image', mimeType: file.type || 'image/png', dataUrl: reader.result });
-          renderChips();
-          updateSendBtn();
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-    if (found) event.preventDefault();
-  });
-
-  // ── Extension Messages ──
-  window.addEventListener('message', event => {
-    const msg = event.data;
-    if (!msg || typeof msg !== 'object') return;
-
-    if (msg.type === 'chat:status') {
-      setStatus(msg.text || '', true);
-    } else if (msg.type === 'chat:assistant') {
-      addMessage('assistant', msg.text || '');
-      setStatus('Ready', false);
-    } else if (msg.type === 'chat:error') {
-      addMessage('error', msg.text || 'Unknown error');
-      setStatus('Ready', false);
-    } else if (msg.type === 'chat:new-chat') {
-      const id = msg.chatId || genId();
-      state.chats[id] = { id, title: msg.text || 'New Chat', messages: [], createdAt: Date.now() };
-      state.currentChatId = id;
-      persist();
-      showChat(id);
-    } else if (msg.type === 'chat:load-history') {
-      try {
-        const h = JSON.parse(msg.text || '{}');
-        state.chats = h.chats || {};
-        state.currentChatId = h.currentChatId || null;
-        persist();
-        showSessions();
-      } catch(e) {}
-    }
-  });
-
-  // ── Init ──
-  if (!state.chats || Object.keys(state.chats).length === 0) {
-    createNewChat();
-  } else if (state.currentChatId && state.chats[state.currentChatId]) {
-    showChat(state.currentChatId);
-  } else {
-    showSessions();
-  }
-
-  // Tell extension we're ready
-  vscode.postMessage({ type: 'ready' });
-})();
-</script>
-</body>
-</html>`;
+    view.webview.html = buildWebviewHtml(nonce);
   }
 }
 
@@ -834,4 +93,342 @@ function getNonce(): string {
     text += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return text;
+}
+
+function buildWebviewHtml(nonce: string): string {
+  return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ThinkCoffee PM</title>
+<style>
+:root { --radius: 8px; --font-sm: 11px; --font-base: 13px; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--font-base);
+  color: var(--vscode-foreground);
+  background: var(--vscode-sideBar-background);
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+}
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-widget-border));
+  background: var(--vscode-sideBarSectionHeader-background, transparent);
+  flex-shrink: 0;
+}
+.topbar-left { display: flex; align-items: center; gap: 6px; }
+.topbar-title { font-size: var(--font-base); font-weight: 600; }
+.topbar-badge {
+  font-size: 9px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground);
+  padding: 1px 6px; border-radius: 10px; font-weight: 600;
+}
+.topbar-actions { display: flex; gap: 4px; }
+.icon-btn {
+  background: transparent; border: none; color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer; padding: 4px; border-radius: 4px; font-size: 14px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; opacity: 0.8;
+}
+.icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+.icon-btn.danger:hover { background: color-mix(in srgb, var(--vscode-errorForeground) 20%, transparent); color: var(--vscode-errorForeground); }
+.history-panel {
+  display: none; flex-direction: column;
+  border-bottom: 1px solid var(--vscode-widget-border); max-height: 200px; overflow: hidden;
+}
+.history-panel.open { display: flex; }
+.history-list { list-style: none; overflow-y: auto; flex: 1; padding: 4px 8px; }
+.history-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 8px; border-radius: 4px; cursor: pointer;
+  font-size: var(--font-sm); opacity: 0.85;
+}
+.history-item:hover { background: var(--vscode-list-hoverBackground); opacity: 1; }
+.history-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); opacity: 1; }
+.history-item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-del { background: none; border: none; color: var(--vscode-foreground); opacity: 0; cursor: pointer; font-size: 12px; padding: 0 2px; }
+.history-item:hover .history-del { opacity: 0.6; }
+.history-del:hover { opacity: 1 !important; color: var(--vscode-errorForeground); }
+.messages-container { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.welcome {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  flex: 1; gap: 12px; opacity: 0.7; text-align: center; padding: 20px;
+}
+.welcome-icon { font-size: 28px; }
+.welcome h3 { font-size: 14px; font-weight: 600; }
+.welcome p { font-size: var(--font-sm); line-height: 1.5; max-width: 280px; }
+.msg-group { display: flex; flex-direction: column; gap: 2px; }
+.msg-header { display: flex; align-items: center; gap: 6px; font-size: var(--font-sm); font-weight: 600; padding-left: 2px; }
+.msg-avatar {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; flex-shrink: 0;
+}
+.msg-avatar.user { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.msg-avatar.pm { background: color-mix(in srgb, #f0883e 90%, transparent); color: #fff; }
+.msg-body {
+  padding: 8px 12px; border-radius: var(--radius); font-size: var(--font-base);
+  line-height: 1.5; white-space: pre-wrap; word-break: break-word; margin-left: 24px;
+}
+.msg-body.user { background: color-mix(in srgb, var(--vscode-button-background) 15%, transparent); border: 1px solid color-mix(in srgb, var(--vscode-button-background) 30%, transparent); }
+.msg-body.assistant { background: var(--vscode-editor-background); border: 1px solid var(--vscode-widget-border); }
+.msg-body.error { background: color-mix(in srgb, var(--vscode-errorForeground) 10%, transparent); border: 1px solid color-mix(in srgb, var(--vscode-errorForeground) 25%, transparent); color: var(--vscode-errorForeground); }
+.thinking { display: none; align-items: center; gap: 8px; padding: 6px 12px; margin-left: 24px; font-size: var(--font-sm); color: var(--vscode-descriptionForeground); }
+.thinking.visible { display: flex; }
+.thinking-dots { display: flex; gap: 3px; }
+.thinking-dots span { width: 4px; height: 4px; border-radius: 50%; background: var(--vscode-descriptionForeground); animation: blink 1.4s infinite both; }
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,80%,100%{opacity:0.2;} 40%{opacity:1;} }
+.step-item { display: flex; align-items: flex-start; gap: 6px; padding: 3px 12px; margin-left: 24px; font-size: var(--font-sm); color: var(--vscode-descriptionForeground); }
+.step-icon { flex-shrink: 0; margin-top: 2px; }
+.statusbar { font-size: var(--font-sm); padding: 4px 12px; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-widget-border); flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--vscode-testing-iconPassed, #3fb950); flex-shrink: 0; }
+.status-dot.busy { background: var(--vscode-debugIcon-startForeground, #f0883e); animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+.capabilities-panel { display: none; flex-direction: column; border-top: 1px solid var(--vscode-widget-border); max-height: 55vh; overflow-y: auto; flex-shrink: 0; padding: 8px; gap: 6px; }
+.capabilities-panel.open { display: flex; }
+.cap-group-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--vscode-descriptionForeground); padding: 6px 4px 2px; }
+.cap-btn { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: none; border-radius: 4px; background: transparent; color: var(--vscode-foreground); cursor: pointer; font-size: var(--font-sm); text-align: left; width: 100%; }
+.cap-btn:hover { background: var(--vscode-list-hoverBackground); }
+.cap-icon { font-size: 14px; width: 20px; text-align: center; flex-shrink: 0; }
+.cap-label { flex: 1; }
+.composer-wrapper { flex-shrink: 0; border-top: 1px solid var(--vscode-widget-border); background: var(--vscode-sideBar-background); }
+.chips-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px 0; }
+.chips-bar:empty { padding: 0; }
+.chip { font-size: 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 2px 8px; border-radius: 10px; }
+.composer { display: flex; align-items: flex-end; gap: 6px; padding: 8px 12px; }
+.prompt-input { flex: 1; min-height: 36px; max-height: 120px; resize: none; border: 1px solid var(--vscode-input-border); border-radius: var(--radius); background: var(--vscode-input-background); color: var(--vscode-input-foreground); padding: 8px 10px; font-size: var(--font-base); font-family: var(--vscode-font-family); line-height: 1.4; outline: none; }
+.prompt-input:focus { border-color: var(--vscode-focusBorder); }
+.prompt-input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.composer-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.send-btn { width: 30px; height: 30px; border-radius: 6px; border: none; background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+.send-btn:hover { background: var(--vscode-button-hoverBackground); }
+.send-btn:disabled { opacity: 0.4; cursor: default; }
+.stop-btn { width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--vscode-errorForeground); background: transparent; color: var(--vscode-errorForeground); cursor: pointer; font-size: 12px; display: none; align-items: center; justify-content: center; }
+.stop-btn:hover { background: color-mix(in srgb, var(--vscode-errorForeground) 15%, transparent); }
+.stop-btn.visible { display: flex; }
+.composer-toolbar { display: flex; align-items: center; gap: 4px; padding: 0 12px 8px; }
+.toolbar-btn { font-size: var(--font-sm); padding: 2px 8px; border-radius: 4px; border: 1px solid var(--vscode-input-border); background: transparent; color: var(--vscode-foreground); cursor: pointer; opacity: 0.7; }
+.toolbar-btn:hover { opacity: 1; background: var(--vscode-list-hoverBackground); }
+.toolbar-btn.active { border-color: var(--vscode-focusBorder); opacity: 1; }
+.toolbar-spacer { flex: 1; }
+.toolbar-mode { font-size: 10px; color: var(--vscode-descriptionForeground); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="topbar-left">
+    <span class="topbar-title">ThinkCoffee PM</span>
+    <span class="topbar-badge">AI</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="icon-btn" id="btnHistory" title="Chat history">&#128203;</button>
+    <button class="icon-btn" id="btnCapabilities" title="PM capabilities">&#9889;</button>
+    <button class="icon-btn" id="btnNewChat" title="New chat">&#43;</button>
+    <button class="icon-btn danger" id="btnStopAll" title="Stop all AI tasks">&#9632;</button>
+  </div>
+</div>
+<div class="history-panel" id="historyPanel">
+  <ul class="history-list" id="historyList"></ul>
+</div>
+<div class="capabilities-panel" id="capPanel">
+  <div class="cap-group-title">Reasoning &amp; Analysis</div>
+  <button class="cap-btn" data-cap="adaptive-reasoning"><span class="cap-icon">&#129504;</span><span class="cap-label">Adaptive Reasoning</span></button>
+  <button class="cap-btn" data-cap="deep-reasoning"><span class="cap-icon">&#128161;</span><span class="cap-label">Deep Reasoning (Extended Thinking)</span></button>
+  <button class="cap-btn" data-cap="multi-step-solve"><span class="cap-icon">&#127922;</span><span class="cap-label">Multi-step Problem Solving</span></button>
+  <button class="cap-btn" data-cap="pattern-discovery"><span class="cap-icon">&#128269;</span><span class="cap-label">Hidden Pattern Discovery</span></button>
+  <button class="cap-btn" data-cap="complex-systems"><span class="cap-icon">&#128300;</span><span class="cap-label">Complex Systems Analysis</span></button>
+  <button class="cap-btn" data-cap="interdisciplinary"><span class="cap-icon">&#127891;</span><span class="cap-label">Interdisciplinary Knowledge Synthesis</span></button>
+  <button class="cap-btn" data-cap="inconsistency-detection"><span class="cap-icon">&#9888;</span><span class="cap-label">Technical Inconsistency Detection</span></button>
+  <button class="cap-btn" data-cap="scientific-analysis"><span class="cap-icon">&#128300;</span><span class="cap-label">Advanced Scientific Analysis</span></button>
+  <div class="cap-group-title">Software Engineering</div>
+  <button class="cap-btn" data-cap="generate-code"><span class="cap-icon">&#128187;</span><span class="cap-label">Advanced Code Generation</span></button>
+  <button class="cap-btn" data-cap="debug-code"><span class="cap-icon">&#128027;</span><span class="cap-label">Automatic System Debugging</span></button>
+  <button class="cap-btn" data-cap="refactor-code"><span class="cap-icon">&#9881;</span><span class="cap-label">Code Refactoring</span></button>
+  <button class="cap-btn" data-cap="autonomous-dev"><span class="cap-icon">&#129302;</span><span class="cap-label">Autonomous Software Development</span></button>
+  <button class="cap-btn" data-cap="task-decomposition"><span class="cap-icon">&#128203;</span><span class="cap-label">Automatic Task Decomposition</span></button>
+  <button class="cap-btn" data-cap="self-optimization"><span class="cap-icon">&#128260;</span><span class="cap-label">Iterative Self-Optimization</span></button>
+  <div class="cap-group-title">Security &amp; Defense</div>
+  <button class="cap-btn" data-cap="vulnerability-scan"><span class="cap-icon">&#128274;</span><span class="cap-label">Vulnerability Discovery (incl. Zero-day)</span></button>
+  <button class="cap-btn" data-cap="security-analysis"><span class="cap-icon">&#128737;</span><span class="cap-label">Systems Security Analysis</span></button>
+  <button class="cap-btn" data-cap="attack-simulation"><span class="cap-icon">&#9876;</span><span class="cap-label">Multi-step Attack Simulation</span></button>
+  <button class="cap-btn" data-cap="exploit-chain"><span class="cap-icon">&#128279;</span><span class="cap-label">Exploit Chain Analysis</span></button>
+  <button class="cap-btn" data-cap="defensive-security"><span class="cap-icon">&#128737;</span><span class="cap-label">Defensive Security Application</span></button>
+  <button class="cap-btn" data-cap="evasion-testing"><span class="cap-icon">&#128683;</span><span class="cap-label">Restriction Evasion Testing (Controlled)</span></button>
+  <div class="cap-group-title">Autonomous Operations</div>
+  <button class="cap-btn" data-cap="long-task"><span class="cap-icon">&#9201;</span><span class="cap-label">Long-running Task Execution</span></button>
+  <button class="cap-btn" data-cap="workflow-planning"><span class="cap-icon">&#128197;</span><span class="cap-label">Complex Workflow Planning</span></button>
+  <button class="cap-btn" data-cap="autonomous-agent"><span class="cap-icon">&#129302;</span><span class="cap-label">Continuous Autonomous Agent</span></button>
+  <button class="cap-btn" data-cap="contextual-decision"><span class="cap-icon">&#127919;</span><span class="cap-label">Contextual Decision Making</span></button>
+  <button class="cap-btn" data-cap="dynamic-adaptation"><span class="cap-icon">&#128257;</span><span class="cap-label">Dynamic Behavior Adaptation</span></button>
+  <button class="cap-btn" data-cap="long-context"><span class="cap-icon">&#128220;</span><span class="cap-label">Long Context Processing</span></button>
+  <button class="cap-btn" data-cap="contextual-memory"><span class="cap-icon">&#129504;</span><span class="cap-label">Advanced Contextual Memory</span></button>
+  <div class="cap-group-title">Multimodal</div>
+  <button class="cap-btn" data-cap="multimodal-text-image"><span class="cap-icon">&#128444;</span><span class="cap-label">Text &amp; Image Analysis</span></button>
+  <button class="cap-btn" data-cap="diagram-interpretation"><span class="cap-icon">&#128200;</span><span class="cap-label">Graph &amp; Diagram Interpretation</span></button>
+</div>
+<div class="messages-container" id="messagesContainer">
+  <div class="welcome" id="welcome">
+    <div class="welcome-icon">&#9749;</div>
+    <h3>ThinkCoffee PM</h3>
+    <p>Your autonomous project manager. Send a message or select a capability to get started.</p>
+  </div>
+</div>
+<div class="thinking" id="thinking">
+  <div class="thinking-dots"><span></span><span></span><span></span></div>
+  <span id="thinkingText">PM is thinking...</span>
+</div>
+<div class="statusbar">
+  <span class="status-dot" id="statusDot"></span>
+  <span id="statusText">Ready</span>
+</div>
+<div class="composer-wrapper">
+  <div class="chips-bar" id="chipsBar"></div>
+  <div class="composer">
+    <textarea class="prompt-input" id="promptInput" placeholder="Ask the PM anything..." rows="1"></textarea>
+    <div class="composer-actions">
+      <button class="send-btn" id="btnSend" title="Send (Enter)">&#9654;</button>
+      <button class="stop-btn" id="btnStop" title="Stop current task">&#9632;</button>
+    </div>
+  </div>
+  <div class="composer-toolbar">
+    <button class="toolbar-btn" id="btnAttachFile" title="Attach active editor file">+ File</button>
+    <button class="toolbar-btn" id="btnAttachImage" title="Paste or attach image">Image</button>
+    <span class="toolbar-spacer"></span>
+    <span class="toolbar-mode" id="modeLabel">auto</span>
+  </div>
+</div>
+<script nonce="${nonce}">
+(function(){
+var vscode=acquireVsCodeApi();
+var _=function(id){return document.getElementById(id);};
+var mc=_('messagesContainer'),wc=_('welcome'),th=_('thinking'),tt=_('thinkingText');
+var sd=_('statusDot'),st=_('statusText'),pi=_('promptInput'),cb=_('chipsBar');
+var hp=_('historyPanel'),hl=_('historyList'),cp=_('capPanel');
+var bs=_('btnSend'),bp=_('btnStop'),bh=_('btnHistory'),bc=_('btnCapabilities');
+var bn=_('btnNewChat'),ba=_('btnStopAll'),bf=_('btnAttachFile'),bi=_('btnAttachImage');
+var chats={},cid=null,incFile=false,imgs=[],busy=false;
+
+function load(){var s=vscode.getState();if(s){chats=s.chats||{};cid=s.currentChatId||null;}if(!cid||!chats[cid])newChat(true);}
+function save(){vscode.setState({chats:chats,currentChatId:cid});}
+function gid(){return 'c_'+Date.now()+'_'+Math.random().toString(36).substr(2,6);}
+
+function newChat(q){
+  var id=gid();
+  chats[id]={id:id,title:new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}),messages:[],createdAt:Date.now()};
+  cid=id;save();if(!q){rList();rMsgs();}
+}
+function delChat(id){if(Object.keys(chats).length<=1)return;delete chats[id];if(cid===id){cid=Object.keys(chats).sort(function(a,b){return(chats[b].createdAt||0)-(chats[a].createdAt||0);})[0];}save();rList();rMsgs();}
+function swChat(id){if(!chats[id])return;cid=id;save();rList();rMsgs();}
+
+function rList(){
+  hl.innerHTML='';
+  var sorted=Object.values(chats).sort(function(a,b){return b.createdAt-a.createdAt;});
+  for(var i=0;i<sorted.length;i++){
+    var c=sorted[i],li=document.createElement('li');
+    li.className='history-item'+(c.id===cid?' active':'');
+    var n=document.createElement('span');n.className='history-item-name';n.textContent=c.title||'Untitled';
+    (function(id){n.addEventListener('click',function(){swChat(id);});})(c.id);
+    var d=document.createElement('button');d.className='history-del';d.textContent='\u00d7';d.title='Delete';
+    (function(id){d.addEventListener('click',function(e){e.stopPropagation();delChat(id);});})(c.id);
+    li.appendChild(n);li.appendChild(d);hl.appendChild(li);
+  }
+}
+
+function rMsgs(){
+  var c=chats[cid];if(!c)return;
+  while(mc.firstChild)mc.removeChild(mc.firstChild);
+  if(c.messages.length===0){mc.appendChild(wc);wc.style.display='flex';}
+  else{wc.style.display='none';for(var i=0;i<c.messages.length;i++)appMsg(c.messages[i].role,c.messages[i].text);sBot();}
+}
+
+function appMsg(role,text){
+  var g=document.createElement('div');g.className='msg-group';
+  var h=document.createElement('div');h.className='msg-header';
+  var a=document.createElement('div');a.className='msg-avatar '+(role==='user'?'user':'pm');a.textContent=role==='user'?'U':'PM';
+  var nm=document.createElement('span');nm.textContent=role==='user'?'You':role==='error'?'Error':'ThinkCoffee PM';
+  h.appendChild(a);h.appendChild(nm);
+  var b=document.createElement('div');b.className='msg-body '+(role==='user'?'user':role==='error'?'error':'assistant');b.textContent=text;
+  g.appendChild(h);g.appendChild(b);mc.appendChild(g);return g;
+}
+
+function addMsg(role,text){
+  if(!cid||!chats[cid])return;chats[cid].messages.push({role:role,text:text,ts:Date.now()});
+  var um=chats[cid].messages.filter(function(m){return m.role==='user';});
+  if(role==='user'&&um.length===1){chats[cid].title=text.slice(0,50)+(text.length>50?'...':'');rList();}
+  save();wc.style.display='none';appMsg(role,text);sBot();
+}
+
+function sBot(){requestAnimationFrame(function(){mc.scrollTop=mc.scrollHeight;});}
+
+function setBusy(b,label){
+  busy=b;sd.className='status-dot'+(b?' busy':'');st.textContent=label||(b?'Working...':'Ready');
+  th.className='thinking'+(b?' visible':'');tt.textContent=label||'PM is thinking...';
+  bs.disabled=b;bp.className='stop-btn'+(b?' visible':'');
+}
+
+function rChips(){
+  var p=[];if(incFile)p.push('<span class="chip">Active file</span>');
+  for(var i=0;i<imgs.length;i++)p.push('<span class="chip">'+esc(imgs[i].name||'image')+'</span>');
+  cb.innerHTML=p.join('');bf.classList.toggle('active',incFile);
+}
+function esc(t){return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function submit(){
+  var text=(pi.value||'').trim();if(!text&&!incFile&&imgs.length===0)return;if(busy)return;
+  var preview=text||(incFile?'[Active editor file]':'[Image attachment]');
+  addMsg('user',preview);setBusy(true,'PM is analyzing...');
+  vscode.postMessage({type:'ask',prompt:text,includeActiveEditor:incFile,images:imgs});
+  pi.value='';imgs=[];incFile=false;rChips();aResize();pi.focus();
+}
+
+var capLabels={'adaptive-reasoning':'Adaptive Reasoning','deep-reasoning':'Deep Reasoning','multi-step-solve':'Multi-step Problem Solving','pattern-discovery':'Hidden Pattern Discovery','complex-systems':'Complex Systems Analysis','interdisciplinary':'Interdisciplinary Synthesis','inconsistency-detection':'Inconsistency Detection','scientific-analysis':'Scientific Analysis','generate-code':'Code Generation','debug-code':'Debug Code','refactor-code':'Refactor Code','autonomous-dev':'Autonomous Development','task-decomposition':'Task Decomposition','self-optimization':'Self-Optimization','vulnerability-scan':'Vulnerability Scan','security-analysis':'Security Analysis','attack-simulation':'Attack Simulation','exploit-chain':'Exploit Chain Analysis','defensive-security':'Defensive Security','evasion-testing':'Evasion Testing','long-task':'Long-running Task','workflow-planning':'Workflow Planning','autonomous-agent':'Autonomous Agent','contextual-decision':'Contextual Decision','dynamic-adaptation':'Dynamic Adaptation','long-context':'Long Context Processing','contextual-memory':'Contextual Memory','multimodal-text-image':'Multimodal Analysis','diagram-interpretation':'Diagram Interpretation'};
+
+function dispCap(cap){if(busy)return;var label=capLabels[cap]||cap;addMsg('user','/'+cap);setBusy(true,'Running: '+label+'...');cp.classList.remove('open');vscode.postMessage({type:'capability',capability:cap});}
+
+function aResize(){pi.style.height='auto';pi.style.height=Math.min(pi.scrollHeight,120)+'px';}
+
+bs.addEventListener('click',submit);
+bp.addEventListener('click',function(){vscode.postMessage({type:'stop'});setBusy(false,'Stopped');});
+ba.addEventListener('click',function(){vscode.postMessage({type:'stop'});setBusy(false,'All tasks stopped');});
+bn.addEventListener('click',function(){newChat(false);});
+bh.addEventListener('click',function(){hp.classList.toggle('open');cp.classList.remove('open');});
+bc.addEventListener('click',function(){cp.classList.toggle('open');hp.classList.remove('open');});
+bf.addEventListener('click',function(){incFile=!incFile;rChips();});
+bi.addEventListener('click',function(){imgs=[];rChips();});
+document.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&document.activeElement===pi){e.preventDefault();e.stopImmediatePropagation();submit();}},true);
+pi.addEventListener('input',aResize);
+pi.addEventListener('paste',function(e){
+  var items=e.clipboardData&&e.clipboardData.items;if(!items)return;var found=false;
+  for(var i=0;i<items.length;i++){var item=items[i];if(item.kind!=='file'||!item.type.startsWith('image/'))continue;var file=item.getAsFile();if(!file)continue;found=true;
+  (function(f){var reader=new FileReader();reader.onload=function(){if(typeof reader.result==='string'){imgs=imgs.concat([{name:f.name||'pasted-image',mimeType:f.type,dataUrl:reader.result}]).slice(0,5);rChips();}};reader.readAsDataURL(f);})(file);}
+  if(found)e.preventDefault();
+});
+
+var cbs=document.querySelectorAll('.cap-btn');
+for(var i=0;i<cbs.length;i++){(function(btn){btn.addEventListener('click',function(){var cap=btn.getAttribute('data-cap');if(cap)dispCap(cap);});})(cbs[i]);}
+
+window.addEventListener('message',function(e){
+  var msg=e.data;if(!msg||typeof msg!=='object')return;
+  switch(msg.type){
+    case 'chat:status':st.textContent=msg.text||'Ready';break;
+    case 'chat:assistant':addMsg('assistant',msg.text||'');setBusy(false,'Ready');break;
+    case 'chat:error':addMsg('error',msg.text||'Unknown error');setBusy(false,'Ready');break;
+    case 'chat:thinking':setBusy(true,msg.text||'PM is thinking...');break;
+    case 'chat:step':var s=document.createElement('div');s.className='step-item';s.innerHTML='<span class="step-icon">&#10003;</span> '+esc(msg.text||'');mc.appendChild(s);sBot();break;
+    case 'chat:done':setBusy(false,'Ready');break;
+    case 'chat:capability-result':addMsg('assistant',msg.text||'');setBusy(false,'Ready');break;
+    case 'chat:new-chat':if(msg.text){var id=msg.chatId||gid();chats[id]={id:id,title:msg.text,messages:[],createdAt:Date.now()};cid=id;save();rList();rMsgs();}break;
+    case 'chat:load-history':try{var h=JSON.parse(msg.text||'{}');if(h.chats)chats=h.chats;if(h.currentChatId)cid=h.currentChatId;save();rList();rMsgs();}catch(ex){}break;
+  }
+});
+
+load();rList();rMsgs();rChips();pi.focus();
+})();
+</script>
+</body>
+</html>`;
 }
