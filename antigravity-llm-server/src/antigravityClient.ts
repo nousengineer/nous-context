@@ -33,6 +33,7 @@
 
 import { execSync } from 'child_process';
 import * as https from 'https';
+import * as tls from 'tls';
 
 // ─── Discovery ────────────────────────────────────────────────────────────────
 
@@ -167,6 +168,8 @@ export interface UnaryCallOptions<TReq = unknown> {
 }
 
 export class LanguageServerClient {
+    private resolvedHttpsPort?: number;
+
     constructor(public readonly info: LanguageServerInfo) {}
 
     static connect(workspaceFolderFsPath?: string): LanguageServerClient {
@@ -179,18 +182,60 @@ export class LanguageServerClient {
         return new LanguageServerClient(info);
     }
 
+    /**
+     * Resolves which of the LS's listening ports speaks TLS. The LS binds
+     * up to 3 ports (http / https / lsp) and the ordering is not stable,
+     * so we probe lazily and cache the winner.
+     */
+    async httpsPort(): Promise<number> {
+        if (this.resolvedHttpsPort !== undefined) return this.resolvedHttpsPort;
+        const probe = (port: number) =>
+            new Promise<number>((resolve, reject) => {
+                const sock = tls.connect(
+                    {
+                        host: '127.0.0.1',
+                        port,
+                        rejectUnauthorized: false,
+                        ALPNProtocols: ['h2', 'http/1.1'],
+                    },
+                    () => {
+                        sock.end();
+                        resolve(port);
+                    },
+                );
+                sock.setTimeout(1500, () => {
+                    sock.destroy();
+                    reject(new Error(`tls timeout ${port}`));
+                });
+                sock.on('error', (err) => reject(err));
+            });
+
+        const attempts = await Promise.allSettled(this.info.ports.map(probe));
+        for (const a of attempts) {
+            if (a.status === 'fulfilled') {
+                this.resolvedHttpsPort = a.value;
+                return a.value;
+            }
+        }
+        // Fall back to whatever discovery guessed — the call will fail with a
+        // meaningful transport error rather than an opaque TLS error.
+        this.resolvedHttpsPort = this.info.httpsPort;
+        return this.resolvedHttpsPort;
+    }
+
     /** Makes a Connect unary JSON RPC. Throws `ConnectError` on non-2xx. */
     async unary<TRes = unknown, TReq = unknown>(
         opts: UnaryCallOptions<TReq>,
     ): Promise<TRes> {
         const service = opts.service ?? LANGUAGE_SERVER_SERVICE;
         const payload = Buffer.from(JSON.stringify(opts.request ?? {}));
+        const port = await this.httpsPort();
 
         const response = await new Promise<import('http').IncomingMessage>((resolve, reject) => {
             const req = https.request(
                 {
                     host: '127.0.0.1',
-                    port: this.info.httpsPort,
+                    port,
                     method: 'POST',
                     path: `/${service}/${opts.method}`,
                     rejectUnauthorized: false,
@@ -230,6 +275,99 @@ export class LanguageServerClient {
 
         if (!text) return {} as TRes;
         return JSON.parse(text) as TRes;
+    }
+
+    /**
+     * Opens a Connect server-streaming RPC and yields decoded JSON messages.
+     * Frame format: [flags:1][len:4-BE][payload]. `flags & 2` marks the end
+     * frame (whose payload is a JSON object — `{}` on success, or
+     * `{error:{code,message}}` on error).
+     */
+    async *serverStream<TRes = unknown, TReq = unknown>(
+        opts: UnaryCallOptions<TReq>,
+    ): AsyncGenerator<TRes, void, void> {
+        const service = opts.service ?? LANGUAGE_SERVER_SERVICE;
+        const port = await this.httpsPort();
+
+        const json = Buffer.from(JSON.stringify(opts.request ?? {}));
+        const hdr = Buffer.alloc(5);
+        hdr.writeUInt8(0, 0);
+        hdr.writeUInt32BE(json.byteLength, 1);
+        const body = Buffer.concat([hdr, json]);
+
+        const response = await new Promise<import('http').IncomingMessage>(
+            (resolve, reject) => {
+                const req = https.request(
+                    {
+                        host: '127.0.0.1',
+                        port,
+                        method: 'POST',
+                        path: `/${service}/${opts.method}`,
+                        rejectUnauthorized: false,
+                        headers: {
+                            'Content-Type': 'application/connect+json',
+                            'Accept': 'application/connect+json',
+                            'Connect-Protocol-Version': '1',
+                            'x-codeium-csrf-token': this.info.csrfToken,
+                            'Content-Length': String(body.byteLength),
+                        },
+                    },
+                    resolve,
+                );
+                req.on('error', reject);
+                opts.signal?.addEventListener('abort', () =>
+                    req.destroy(new Error('aborted')),
+                );
+                req.end(body);
+            },
+        );
+
+        const status = response.statusCode ?? 0;
+        if (status < 200 || status >= 300) {
+            const errChunks: Buffer[] = [];
+            for await (const c of response) errChunks.push(c as Buffer);
+            const errText = Buffer.concat(errChunks).toString('utf-8');
+            throw new ConnectError(status, 'stream_http_error', errText.slice(0, 500));
+        }
+
+        let buf = Buffer.alloc(0);
+        for await (const chunk of response) {
+            buf = Buffer.concat([buf, chunk as Buffer]);
+            while (buf.length >= 5) {
+                const flags = buf.readUInt8(0);
+                const len = buf.readUInt32BE(1);
+                if (buf.length < 5 + len) break;
+                const payload = buf.subarray(5, 5 + len);
+                buf = buf.subarray(5 + len);
+
+                const isEnd = (flags & 2) !== 0;
+                const text = payload.toString('utf-8');
+                if (isEnd) {
+                    if (!text) return;
+                    try {
+                        const parsed = JSON.parse(text) as {
+                            error?: { code?: string; message?: string };
+                        };
+                        if (parsed.error) {
+                            throw new ConnectError(
+                                status,
+                                parsed.error.code ?? 'unknown',
+                                parsed.error.message ?? 'stream ended with error',
+                            );
+                        }
+                    } catch (err) {
+                        if (err instanceof ConnectError) throw err;
+                    }
+                    return;
+                }
+                if (!text) continue;
+                try {
+                    yield JSON.parse(text) as TRes;
+                } catch {
+                    /* skip malformed frames */
+                }
+            }
+        }
     }
 }
 
