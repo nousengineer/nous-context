@@ -28,7 +28,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@thinkcoffee/core': path.resolve(__dirname, './packages/core/src'),
+      '@thinkbrew/core': path.resolve(__dirname, './packages/core/src'),
     },
   },
 });

@@ -5,10 +5,10 @@ import { registerProjectEndpoints } from './projectEndpoints';
 import { registerResourceEndpoints } from './resourceEndpoints';
 import { registerPromptEndpoints } from './promptEndpoints';
 import { registerEventEndpoints } from './eventEndpoints';
-import { getEventBus } from '@thinkcoffee/core';
+import { getEventBus } from '@thinkbrew/core';
 
 const server = new McpServer({
-  name: 'thinkcoffee',
+  name: 'thinkbrew',
   version: '2.0.0',
 });
 

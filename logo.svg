@@ -27,6 +27,6 @@
     <path d="M5.5 9.5 Q7.5 7.8 10 9.5 Q12.5 11.2 14.5 9.5" stroke="#D4A96A" stroke-width="0.35" stroke-linecap="round" fill="none" opacity="0.9"/>
   </g>
 
-  <!-- Text: thinkCoffee -->
-  <text x="100" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="16" font-weight="700" fill="#C8A96E" text-anchor="middle" letter-spacing="1.5">thinkCoffee</text>
+  <!-- Text: thinkBrew -->
+  <text x="100" y="198" font-family="'Segoe UI', Arial, sans-serif" font-size="16" font-weight="700" fill="#C8A96E" text-anchor="middle" letter-spacing="1.5">thinkBrew</text>
 </svg>

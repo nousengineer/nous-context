@@ -1,1 +1,0 @@
-export { ChatSidebarProvider } from './SidebarProviders';

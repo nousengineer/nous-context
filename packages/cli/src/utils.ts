@@ -1,4 +1,4 @@
-import { getDatabase, ProjectService, ContextService, DecisionService } from '@thinkcoffee/core';
+import { getDatabase, ProjectService, ContextService, DecisionService } from '@thinkbrew/core';
 
 let _db: Awaited<ReturnType<typeof getDatabase>> | null = null;
 

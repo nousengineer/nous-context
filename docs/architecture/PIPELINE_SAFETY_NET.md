@@ -1,4 +1,4 @@
-# ThinkCoffee — Diagnóstico Final Troubleshooter
+# ThinkBrew — Diagnóstico Final Troubleshooter
 
 ## Diagnóstico
 
@@ -90,4 +90,4 @@ Após análise do feedback do PM e da estrutura do workspace, identifiquei os se
 
 ---
 
-**Troubleshooter — ThinkCoffee**
+**Troubleshooter — ThinkBrew**

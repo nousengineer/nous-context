@@ -6,8 +6,8 @@ import {
     PipelineService,
     exportProject,
     getExportFilename,
-} from '@thinkcoffee/core';
-import type { ExportFormat } from '@thinkcoffee/core';
+} from '@thinkbrew/core';
+import type { ExportFormat } from '@thinkbrew/core';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
@@ -37,7 +37,7 @@ export function registerProjectEndpoints(server: any) {
 
     server.tool(
         'list_projects',
-        'List all ThinkCoffee projects.',
+        'List all ThinkBrew projects.',
         {},
         async () => {
             const { projectService } = await services();
@@ -60,7 +60,7 @@ export function registerProjectEndpoints(server: any) {
 
     server.tool(
         'create_project',
-        'Create a new ThinkCoffee project.',
+        'Create a new ThinkBrew project.',
         {
             name: z.string().describe('Project name'),
             description: z.string().optional().describe('Project description'),
@@ -643,7 +643,7 @@ export function registerProjectEndpoints(server: any) {
             if (!fs.existsSync(absDir)) {
                 return { content: [{ type: 'text', text: `Directory not found: ${dirPath || '.'}` }] };
             }
-            const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target', '.thinkcoffee']);
+            const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target', '.thinkbrew']);
             const results: string[] = [];
             const limit = maxDepth ?? 3;
 

@@ -1,4 +1,4 @@
-import { ChatService } from '@thinkcoffee/core';
+import { ChatService } from '@thinkbrew/core';
 import { z } from 'zod';
 import { execSync } from 'child_process';
 

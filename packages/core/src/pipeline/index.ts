@@ -1,5 +1,5 @@
 /**
- * ThinkCoffee Pipeline Module
+ * ThinkBrew Pipeline Module
  * 
  * Contratos e tipos para o sistema de pipeline.
  */

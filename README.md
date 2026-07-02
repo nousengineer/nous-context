@@ -2,9 +2,9 @@
   <img src="logo.svg" alt="thinkCoffee logo" width="160"/>
 </p>
 
-# ThinkCoffee Project
+# ThinkBrew Project
 
-Este é o repositório principal do projeto ThinkCoffee, um conjunto de ferramentas para aumentar a produtividade de desenvolvimento com o auxílio de IA.
+Este é o repositório principal do projeto ThinkBrew, um conjunto de ferramentas para aumentar a produtividade de desenvolvimento com o auxílio de IA.
 
 ## Arquitetura
 

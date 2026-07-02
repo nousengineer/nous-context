@@ -11,7 +11,7 @@ vi.mock('os');
 describe('PipelineService', () => {
   let service: PipelineService;
   const mockProjectId = 'test-project-123';
-  const mockPipelinesDir = '/home/user/.thinkcoffee/pipelines/test-project-123';
+  const mockPipelinesDir = '/home/user/.thinkbrew/pipelines/test-project-123';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -112,7 +112,7 @@ describe('PipelineService', () => {
 
       expect(fs.writeFileSync).toHaveBeenCalled();
       const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-      expect(writeCall[0]).toContain('.thinkcoffee/pipelines');
+      expect(writeCall[0]).toContain('.thinkbrew/pipelines');
       expect(writeCall[0]).toContain(`${mockProjectId}`);
     });
   });

@@ -19,7 +19,7 @@ describe('ActionLogService', () => {
     if (fs.existsSync(workspaceDir)) {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
-    const logsDir = path.join(os.homedir(), '.thinkcoffee', 'logs');
+    const logsDir = path.join(os.homedir(), '.thinkbrew', 'logs');
     const logFile = path.join(logsDir, `${testPipelineId}.jsonl`);
     if (fs.existsSync(logFile)) {
       fs.unlinkSync(logFile);
@@ -416,7 +416,7 @@ describe('ActionLogService', () => {
       });
 
       // Manually corrupt the log file
-      const logsDir = path.join(os.homedir(), '.thinkcoffee', 'logs');
+      const logsDir = path.join(os.homedir(), '.thinkbrew', 'logs');
       const logFile = path.join(logsDir, `${testPipelineId}.jsonl`);
       const currentContent = fs.readFileSync(logFile, 'utf-8');
       fs.writeFileSync(logFile, currentContent + 'INVALID JSON\n', 'utf-8');

@@ -2,7 +2,7 @@
  * MCP Prompts — Pre-built prompt templates for common AI workflows
  *
  * Prompts give AI assistants structured starting points for complex tasks,
- * automatically enriched with project context from ThinkCoffee.
+ * automatically enriched with project context from ThinkBrew.
  *
  * Available prompts:
  *   code-review         — Review code with project architecture & standards context
@@ -21,7 +21,7 @@ import {
     DecisionService,
     PipelineService,
     exportProject,
-} from '@thinkcoffee/core';
+} from '@thinkbrew/core';
 
 let _projectService: ProjectService | null = null;
 let _contextService: ContextService | null = null;
@@ -90,7 +90,7 @@ export function registerPromptEndpoints(server: any) {
         'code-review',
         'Review code with full awareness of project architecture, standards, and past decisions. Provides context-aware feedback instead of generic review.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             code: z.string().describe('The code to review (paste the file content or diff)'),
             focus: z.string().optional().describe('Specific review focus: security, performance, architecture, readability, or all'),
         },
@@ -143,7 +143,7 @@ Format your review as:
         'architecture-decision',
         'Help make an architectural decision with full awareness of existing ADRs and project context. Generates a structured ADR with rationale and alternatives.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             topic: z.string().describe('The architectural topic or question to decide on'),
             constraints: z.string().optional().describe('Any specific constraints or requirements to consider'),
         },
@@ -209,7 +209,7 @@ For each option:
         'refactor-plan',
         'Plan a refactoring with full awareness of project architecture, dependencies, and safety net features. Produces a step-by-step migration plan.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             target: z.string().describe('What to refactor (file, module, pattern, etc.)'),
             goal: z.string().describe('What the refactoring should achieve'),
         },
@@ -233,7 +233,7 @@ Status: ${activePipeline.status}
                         role: 'user',
                         content: {
                             type: 'text',
-                            text: `You are a senior engineer planning a safe refactoring for this project. The project uses ThinkCoffee's safety net (file snapshots + rollback).
+                            text: `You are a senior engineer planning a safe refactoring for this project. The project uses ThinkBrew's safety net (file snapshots + rollback).
 
 <project-context>
 ${contextBlock}
@@ -252,7 +252,7 @@ Create a detailed refactoring plan:
 
 ### 2. Pre-Refactoring Checklist
 - [ ] Tests to run before starting
-- [ ] Snapshots to take (ThinkCoffee safety net)
+- [ ] Snapshots to take (ThinkBrew safety net)
 - [ ] Dependencies to check
 
 ### 3. Step-by-Step Plan
@@ -265,7 +265,7 @@ Create a detailed refactoring plan:
 
 ### 5. Rollback Strategy
 - What to do if something breaks
-- How to use ThinkCoffee snapshots for recovery`,
+- How to use ThinkBrew snapshots for recovery`,
                         },
                     },
                 ],
@@ -281,7 +281,7 @@ Create a detailed refactoring plan:
         'bug-analysis',
         'Analyze a bug with full project context: architecture, dependencies, recent decisions, and pipeline status. Provides root cause analysis and fix suggestions.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             description: z.string().describe('Bug description: what is happening vs what is expected'),
             errorOutput: z.string().optional().describe('Error messages, stack traces, or logs'),
         },
@@ -323,7 +323,7 @@ Provide a structured analysis:
 
 ### 4. Prevention
 - Tests to add to prevent regression
-- Context entries to add to ThinkCoffee for future reference
+- Context entries to add to ThinkBrew for future reference
 - Whether an architectural decision should be recorded`,
                         },
                     },
@@ -340,7 +340,7 @@ Provide a structured analysis:
         'project-onboarding',
         'Generate a comprehensive onboarding guide for a new developer joining the project. Uses all stored context, decisions, and standards.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             role: z.string().optional().describe('New developer role: fullstack, backend, frontend, devops, qa'),
         },
         async ({ projectId, role }: { projectId: string; role?: string }) => {
@@ -389,7 +389,7 @@ Create a structured onboarding guide:
 (How to add a feature, fix a bug, deploy — for a ${devRole})
 
 ### 8. Who/What to Ask
-(Where to find more info, how to use ThinkCoffee for context)`,
+(Where to find more info, how to use ThinkBrew for context)`,
                         },
                     },
                 ],
@@ -403,9 +403,9 @@ Create a structured onboarding guide:
 
     server.prompt(
         'context-sync-check',
-        'Audit what project context might be missing, outdated, or incomplete. Helps keep ThinkCoffee context fresh and useful.',
+        'Audit what project context might be missing, outdated, or incomplete. Helps keep ThinkBrew context fresh and useful.',
         {
-            projectId: z.string().describe('ThinkCoffee project ID'),
+            projectId: z.string().describe('ThinkBrew project ID'),
             recentChanges: z.string().optional().describe('Description of recent changes to the project'),
         },
         async ({ projectId, recentChanges }: { projectId: string; recentChanges?: string }) => {
@@ -417,7 +417,7 @@ Create a structured onboarding guide:
                         role: 'user',
                         content: {
                             type: 'text',
-                            text: `You are a context quality auditor for this project's ThinkCoffee database. Analyze the current stored context and identify gaps.
+                            text: `You are a context quality auditor for this project's ThinkBrew database. Analyze the current stored context and identify gaps.
 
 <current-context>
 ${contextBlock}
@@ -445,7 +445,7 @@ For each category (architecture, requirements, dependencies, standards, general)
 - Suggested \`add_decision\` calls
 
 ### 5. Recommended Actions
-(Prioritized list of context updates to make via ThinkCoffee tools)`,
+(Prioritized list of context updates to make via ThinkBrew tools)`,
                         },
                     },
                 ],

@@ -7,7 +7,7 @@ import type { SnapshotMetadata, SnapshotFileMetadata, SnapshotFileAction } from 
 
 const SNAPSHOTS_BASE = path.join(
   process.env.HOME || process.env.USERPROFILE || '~',
-  '.thinkcoffee',
+  '.thinkbrew',
   'snapshots',
 );
 
@@ -18,8 +18,8 @@ const SNAPSHOTS_BASE = path.join(
  * API alinhada com SafetyNetIntegration e RollbackCommandHandler.
  *
  * Estrutura em disco:
- *   ~/.thinkcoffee/snapshots/<workspaceHash>/<pipelineId>/<phaseIndex>/_metadata.json
- *   ~/.thinkcoffee/snapshots/<workspaceHash>/<pipelineId>/<phaseIndex>/<sha256_hash>
+ *   ~/.thinkbrew/snapshots/<workspaceHash>/<pipelineId>/<phaseIndex>/_metadata.json
+ *   ~/.thinkbrew/snapshots/<workspaceHash>/<pipelineId>/<phaseIndex>/<sha256_hash>
  */
 export class SnapshotService {
   private readonly _snapshotsRoot: string;

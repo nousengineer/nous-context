@@ -1,25 +1,20 @@
 {
-  "name": "thinkcoffee",
+  "name": "thinkbrew",
   "version": "1.0.0",
   "private": true,
-  "description": "AI Context Management Platform - MCP Server, CLI, and VS Code Extension",
+  "description": "ThinkBrew - AI context sync (MCP server + CLI) and editor-LLM bridges (Copilot/Antigravity as Ollama API)",
   "scripts": {
     "build": "pnpm -r build",
-    "build:core": "pnpm --filter @thinkcoffee/core build",
-    "build:mcp": "pnpm --filter @thinkcoffee/mcp-server build",
-    "build:cli": "pnpm --filter @thinkcoffee/cli build",
-    "build:vscode": "pnpm --filter thinkcoffee-vscode build",
-    "dev:core": "pnpm --filter @thinkcoffee/core dev",
-    "dev:mcp": "pnpm --filter @thinkcoffee/mcp-server dev",
-    "dev:cli": "pnpm --filter @thinkcoffee/cli dev",
+    "build:core": "pnpm --filter @thinkbrew/core build",
+    "build:mcp": "pnpm --filter @thinkbrew/mcp-server build",
+    "build:cli": "pnpm --filter @thinkbrew/cli build",
+    "dev:core": "pnpm --filter @thinkbrew/core dev",
+    "dev:mcp": "pnpm --filter @thinkbrew/mcp-server dev",
+    "dev:cli": "pnpm --filter @thinkbrew/cli dev",
     "test": "node scripts/test-integration.js",
     "test:unit": "pnpm exec vitest run --coverage",
     "ci:install": "pnpm install --frozen-lockfile",
-    "ci:typecheck": "pnpm --filter @thinkcoffee/core exec tsc --noEmit && pnpm --filter @thinkcoffee/cli exec tsc --noEmit && pnpm --filter @thinkcoffee/mcp-server exec tsc --noEmit && pnpm --filter thinkcoffee-vscode exec tsc --noEmit",
-    "docker:build:mcp": "docker build -f Dockerfile -t thinkcoffee/mcp-server:local .",
-    "docker:build:cli": "docker build -f Dockerfile.cli -t thinkcoffee/cli:local .",
-    "compose:cli": "docker compose --profile cli run --rm cli",
-    "compose:mcp": "docker compose --profile mcp run --rm mcp-server"
+    "ci:typecheck": "pnpm --filter @thinkbrew/core exec tsc --noEmit && pnpm --filter @thinkbrew/cli exec tsc --noEmit && pnpm --filter @thinkbrew/mcp-server exec tsc --noEmit"
   },
   "keywords": [
     "ai",
@@ -28,9 +23,12 @@
     "mcp",
     "model-context-protocol",
     "cli",
-    "developer-tools"
+    "developer-tools",
+    "ollama",
+    "llm-bridge",
+    "copilot"
   ],
-  "author": "ThinkCoffee Team",
+  "author": "ThinkBrew Team",
   "license": "MIT",
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.4",

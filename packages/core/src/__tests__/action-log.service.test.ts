@@ -10,7 +10,7 @@ describe('ActionLogService', () => {
 
   beforeEach(async () => {
     // Create temporary directory for tests
-    logsDir = path.join(os.tmpdir(), `thinkcoffee-logs-${Date.now()}`);
+    logsDir = path.join(os.tmpdir(), `thinkbrew-logs-${Date.now()}`);
     await fs.mkdir(logsDir, { recursive: true });
     service = new ActionLogService(logsDir);
   });

@@ -9,6 +9,8 @@ import type { OllamaChatMessage, OllamaModelInfo } from './types';
  */
 export const CURATED_FAMILIES: readonly string[] = [
     'claude-haiku-4.5',
+    'claude-opus-4.5',
+    'claude-opus-4.6',
     'claude-opus-4.7',
     'claude-sonnet-4',
     'claude-sonnet-4.5',
@@ -186,7 +188,9 @@ export async function routeAuto(
         `You are a model router for an AI API server. Analyze the user request and return JSON with the best model and an improved prompt.\n\n` +
         `Available models: ${availableList}\n\n` +
         `Model selection guidelines:\n` +
-        `- claude-opus-4.7: complex multi-step reasoning, deep analysis, long documents, high-quality creative writing\n` +
+        `- claude-opus-4.7: complex multi-step reasoning, deep analysis, long documents, high-quality creative writing (latest Opus)\n` +
+        `- claude-opus-4.6: complex multi-step reasoning, deep analysis, long documents, high-quality creative writing\n` +
+        `- claude-opus-4.5: complex reasoning and analysis, slightly older Opus generation\n` +
         `- claude-sonnet-4.6: balanced general tasks, coding assistance, detailed instructions — default choice\n` +
         `- claude-sonnet-4.5: similar to claude-sonnet-4.6, slightly older\n` +
         `- claude-haiku-4.5: simple fast tasks, classification, short Q&A, summaries\n` +

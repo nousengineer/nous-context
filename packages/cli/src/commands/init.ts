@@ -6,7 +6,7 @@ import { getServices } from '../utils';
 export function registerInitCommand(program: Command) {
   program
     .command('init')
-    .description('Initialize ThinkCoffee in the current project directory')
+    .description('Initialize ThinkBrew in the current project directory')
     .option('-n, --name <name>', 'Project name (defaults to directory name)')
     .option('-d, --description <desc>', 'Project description')
     .action(async (opts: { name?: string; description?: string }) => {
@@ -26,14 +26,14 @@ export function registerInitCommand(program: Command) {
 
       const project = await projects.create({
         name,
-        description: opts.description || `ThinkCoffee context for ${name}`,
+        description: opts.description || `ThinkBrew context for ${name}`,
       });
 
-      // Create .thinkcoffee marker file
-      const markerPath = path.join(cwd, '.thinkcoffee');
+      // Create .thinkbrew marker file
+      const markerPath = path.join(cwd, '.thinkbrew');
       fs.writeFileSync(markerPath, JSON.stringify({ projectId: project.id }, null, 2), 'utf-8');
 
-      console.log(`\nThinkCoffee initialized for: ${name}`);
+      console.log(`\nThinkBrew initialized for: ${name}`);
       console.log(`  Project ID: ${project.id}`);
       console.log(`  Config: ${markerPath}`);
       console.log('');

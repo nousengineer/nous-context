@@ -37,7 +37,7 @@ describe('Pipeline Integration - Post-Grok Migration', () => {
       const pipeline = pipelineService.create(
         mockProjectId,
         'Implement coffee machine API',
-        '/workspace/thinkcoffee'
+        '/workspace/thinkbrew'
       );
 
       expect(pipeline.objective).toBe('Implement coffee machine API');

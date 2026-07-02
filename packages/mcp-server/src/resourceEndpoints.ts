@@ -3,17 +3,17 @@
  *
  * Resources allow AI assistants to discover and read project context
  * without needing to call tools. This gives AIs a "file-system-like"
- * view of all ThinkCoffee data.
+ * view of all ThinkBrew data.
  *
  * Static resources:
- *   thinkcoffee://projects          — List all projects
- *   thinkcoffee://agent-config      — Agent roles and quality tiers
+ *   thinkbrew://projects          — List all projects
+ *   thinkbrew://agent-config      — Agent roles and quality tiers
  *
  * Dynamic resources (templates):
- *   thinkcoffee://project/{id}/summary     — Full project summary
- *   thinkcoffee://project/{id}/context     — All context entries
- *   thinkcoffee://project/{id}/decisions   — All architectural decisions
- *   thinkcoffee://project/{id}/pipelines   — All pipelines
+ *   thinkbrew://project/{id}/summary     — Full project summary
+ *   thinkbrew://project/{id}/context     — All context entries
+ *   thinkbrew://project/{id}/decisions   — All architectural decisions
+ *   thinkbrew://project/{id}/pipelines   — All pipelines
  */
 
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -26,7 +26,7 @@ import {
     exportProject,
     QUALITY_PRESETS,
     AGENT_META,
-} from '@thinkcoffee/core';
+} from '@thinkbrew/core';
 
 let _projectService: ProjectService | null = null;
 let _contextService: ContextService | null = null;
@@ -55,8 +55,8 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'projects',
-        'thinkcoffee://projects',
-        { description: 'List of all ThinkCoffee projects with IDs, names, and status.' },
+        'thinkbrew://projects',
+        { description: 'List of all ThinkBrew projects with IDs, names, and status.' },
         async () => {
             const { projectService } = await services();
             const projects = await projectService.list();
@@ -70,7 +70,7 @@ export function registerResourceEndpoints(server: any) {
             }));
             return {
                 contents: [{
-                    uri: 'thinkcoffee://projects',
+                    uri: 'thinkbrew://projects',
                     mimeType: 'application/json',
                     text: JSON.stringify(summary, null, 2),
                 }],
@@ -84,7 +84,7 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'agent-config',
-        'thinkcoffee://agent-config',
+        'thinkbrew://agent-config',
         { description: 'Available AI agent roles, quality tiers, and model assignments.' },
         async () => {
             const config = {
@@ -100,7 +100,7 @@ export function registerResourceEndpoints(server: any) {
             };
             return {
                 contents: [{
-                    uri: 'thinkcoffee://agent-config',
+                    uri: 'thinkbrew://agent-config',
                     mimeType: 'application/json',
                     text: JSON.stringify(config, null, 2),
                 }],
@@ -114,13 +114,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-summary',
-        new ResourceTemplate('thinkcoffee://project/{id}/summary', {
+        new ResourceTemplate('thinkbrew://project/{id}/summary', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkcoffee://project/${p.id}/summary`,
+                        uri: `thinkbrew://project/${p.id}/summary`,
                         name: `${p.name} — Summary`,
                         description: `Full summary of project "${p.name}" including context, decisions, and pipelines.`,
                     })),
@@ -187,13 +187,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-context',
-        new ResourceTemplate('thinkcoffee://project/{id}/context', {
+        new ResourceTemplate('thinkbrew://project/{id}/context', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkcoffee://project/${p.id}/context`,
+                        uri: `thinkbrew://project/${p.id}/context`,
                         name: `${p.name} — Context`,
                         description: `All context entries for project "${p.name}".`,
                     })),
@@ -234,13 +234,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-decisions',
-        new ResourceTemplate('thinkcoffee://project/{id}/decisions', {
+        new ResourceTemplate('thinkbrew://project/{id}/decisions', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkcoffee://project/${p.id}/decisions`,
+                        uri: `thinkbrew://project/${p.id}/decisions`,
                         name: `${p.name} — Decisions`,
                         description: `Architectural Decision Records for project "${p.name}".`,
                     })),
@@ -279,13 +279,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-pipelines',
-        new ResourceTemplate('thinkcoffee://project/{id}/pipelines', {
+        new ResourceTemplate('thinkbrew://project/{id}/pipelines', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkcoffee://project/${p.id}/pipelines`,
+                        uri: `thinkbrew://project/${p.id}/pipelines`,
                         name: `${p.name} — Pipelines`,
                         description: `Task pipelines for project "${p.name}".`,
                     })),

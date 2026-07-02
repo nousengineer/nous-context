@@ -67,7 +67,7 @@ export class AutoSyncService extends EventEmitter {
       '**/.git/**',
       '**/.vscode/**',
       '**/dist/**',
-      '**/.thinkcoffee/**',
+      '**/.thinkbrew/**',
     ];
 
     this.logger.info('[AutoSync] Service initialized', {

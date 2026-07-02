@@ -8,7 +8,7 @@
 
 ## Contexto
 
-O sistema de agentes do ThinkCoffee precisa evoluir de um monolito (AgentService.ts com 2400+ linhas) para uma arquitetura modular, extensivel e testavel.
+O sistema de agentes do ThinkBrew precisa evoluir de um monolito (AgentService.ts com 2400+ linhas) para uma arquitetura modular, extensivel e testavel.
 
 ---
 
@@ -16,7 +16,7 @@ O sistema de agentes do ThinkCoffee precisa evoluir de um monolito (AgentService
 
 ### D1: Inversao de Dependencia via Interfaces
 
-**Decisao**: Definir interfaces em `@thinkcoffee/core` e implementacoes em `@thinkcoffee/vscode`.
+**Decisao**: Definir interfaces em `@thinkbrew/core` e implementacoes em `@thinkbrew/vscode`.
 
 **Alternativas consideradas**:
 1. Manter tudo em um pacote (status quo)
@@ -154,7 +154,7 @@ export { AgentModelConfig } from './agents/config';
 export { AgentRole, Pipeline, AgentTask } from './agents/contracts';
 
 // Deprecation warning
-/** @deprecated Use AgentRole from '@thinkcoffee/core/agents' */
+/** @deprecated Use AgentRole from '@thinkbrew/core/agents' */
 export type AgentRole = import('./agents/contracts').AgentRole;
 ```
 

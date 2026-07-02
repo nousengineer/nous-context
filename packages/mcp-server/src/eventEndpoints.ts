@@ -8,8 +8,8 @@
  */
 
 import { z } from 'zod';
-import { getEventBus } from '@thinkcoffee/core';
-import type { EventType } from '@thinkcoffee/core';
+import { getEventBus } from '@thinkbrew/core';
+import type { EventType } from '@thinkbrew/core';
 
 const bus = getEventBus('mcp-server');
 
@@ -34,7 +34,7 @@ const EVENT_TYPES: EventType[] = [
 export function registerEventEndpoints(server: any) {
     server.tool(
         'get_recent_events',
-        'Get recent cross-process events from the ThinkCoffee event bus. Shows pipeline state changes, task completions, etc. from all connected processes (VS Code, CLI, other AIs).',
+        'Get recent cross-process events from the ThinkBrew event bus. Shows pipeline state changes, task completions, etc. from all connected processes (VS Code, CLI, other AIs).',
         {
             limit: z.number().optional().describe('Max number of events to return (default: 30)'),
             type: z.string().optional().describe('Filter by event type prefix (e.g. "pipeline:" for all pipeline events)'),
@@ -82,7 +82,7 @@ export function registerEventEndpoints(server: any) {
 
     server.tool(
         'emit_event',
-        'Emit a custom event to the ThinkCoffee event bus. This notifies all connected processes (VS Code extension, CLI, other AIs) in real-time.',
+        'Emit a custom event to the ThinkBrew event bus. This notifies all connected processes (VS Code extension, CLI, other AIs) in real-time.',
         {
             type: z.enum(EVENT_TYPES as [string, ...string[]]).describe('Event type'),
             projectId: z.string().optional().describe('Project ID'),

@@ -206,11 +206,11 @@ function createTasksForPhase(
 // ─── Storage ─────────────────────────────────────────────────
 
 function getPipelinesDir(projectId: string): string {
-  const dir = path.join(os.homedir(), '.thinkcoffee', 'pipelines', projectId);
+  const dir = path.join(os.homedir(), '.thinkbrew', 'pipelines', projectId);
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   } catch (err) {
-    console.error(`[ThinkCoffee] Cannot create pipelines dir ${dir}: ${(err as Error).message}`);
+    console.error(`[ThinkBrew] Cannot create pipelines dir ${dir}: ${(err as Error).message}`);
   }
   return dir;
 }
@@ -227,7 +227,7 @@ function loadPipeline(projectId: string, pipelineId: string): Pipeline | null {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf-8'));
   } catch (err) {
-    console.error(`[ThinkCoffee] Failed to parse pipeline ${pipelineId}: ${(err as Error).message}`);
+    console.error(`[ThinkBrew] Failed to parse pipeline ${pipelineId}: ${(err as Error).message}`);
     return null;
   }
 }
@@ -304,7 +304,7 @@ export class PipelineService {
         const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
         results.push(data);
       } catch (err) {
-        console.error(`[ThinkCoffee] Skipping corrupted pipeline file ${f}: ${(err as Error).message}`);
+        console.error(`[ThinkBrew] Skipping corrupted pipeline file ${f}: ${(err as Error).message}`);
       }
     }
     return results;

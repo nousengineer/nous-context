@@ -35,10 +35,6 @@ export type { CreateSecurityAnalysisInput } from './SecurityAnalysisService';
 export { ExecutionLogService } from './ExecutionLogService';
 export type { CreateExecutionLogInput } from './ExecutionLogService';
 
-// AI Integration Service
-// export { AITaskService } from './AITaskService';
-// export type { AITaskInput } from './AITaskService';
-
 export {
 	AdaptiveOrchestratorService,
 	type OrchestratorRequest,

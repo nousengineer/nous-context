@@ -1,5 +1,5 @@
 /**
- * Core tools for ThinkCoffee agents.
+ * Core tools for ThinkBrew agents.
  * Centralized, safe, and logged file/command operations.
  */
 

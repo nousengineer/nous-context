@@ -1,5 +1,5 @@
 /**
- * ThinkCoffee Core Package
+ * ThinkBrew Core Package
  * 
  * Re-exports de todos os modulos para backward compatibility.
  */
@@ -59,7 +59,7 @@ export {
 
 export {
   type AgentSettings,
-  type ThinkCoffeeConfig,
+  type ThinkBrewConfig,
   DEFAULT_AGENT_SETTINGS,
   CONFIG_VERSION,
 } from './agents/config';

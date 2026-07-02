@@ -123,7 +123,7 @@ export function findRunningLanguageServers(): LanguageServerInfo[] {
 
 /**
  * Picks the LS instance most likely to correspond to the given workspace folder.
- * The workspaceId baked into argv looks like `file_c_3A_GitHub_thinkcoffee`.
+ * The workspaceId baked into argv looks like `file_c_3A_GitHub_thinkbrew`.
  */
 export function findLanguageServerForWorkspace(
     workspaceFolderFsPath?: string,
