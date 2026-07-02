@@ -4,11 +4,7 @@
 
 # ThinkBrew
 
-Duas ferramentas independentes para desenvolvedores que usam IA.
-
----
-
-## Produto 1: **ThinkBrew** — Sincronize conhecimento do projeto com suas ferramentas de IA
+Sincronize conhecimento do projeto com suas ferramentas de IA.
 
 ### O Problema
 
@@ -81,7 +77,7 @@ Exporta contexto e decisões do projeto para arquivos que as ferramentas de IA l
 | `markdown` | `thinkbrew-export.md` | Leitura humana |
 | `plain` | `thinkbrew-export.txt` | Genérico |
 
-### Stack (Produto 1)
+### Stack
 
 - **Linguagem:** TypeScript (monorepo PNPM)
 - **Banco:** SQLite via TypeORM (17 entidades: Project, ContextEntry, Decision, User, Workspace, Agent, Task, Workflow, ChatHistory, ApiKey, SecurityAnalysis, ExecutionLog, OrchestratorPlan, OrchestratorRun, PolicyDecisionAudit, SyncConfig, WorkspaceMember)
@@ -89,33 +85,6 @@ Exporta contexto e decisões do projeto para arquivos que as ferramentas de IA l
 - **Validação:** Zod
 - **Pipeline:** State machine para orquestração multi-fase (11 papéis de agente)
 - **File tools:** Sandboxing de path, snapshot/dry-run, ação com log
-
----
-
-## Produto 2: **Editor LLM Bridges** — Use sua assinatura do editor como API Ollama
-
-Duas extensões VS Code independentes que expõem os modelos de linguagem do seu editor como uma **API HTTP compatível com Ollama**.
-
-| Extensão | Editor / Fonte do LLM |
-|---|---|
-| `vscode-llm-server` | VS Code + GitHub Copilot (`gpt-4o:copilot` etc.) |
-| `antigravity-llm-server` | Windsurf / Antigravity ("Cascade") |
-
-### O que fazem
-
-```bash
-# Após iniciar a extensão, qualquer ferramenta Ollama-compatível pode consumir:
-curl http://127.0.0.1:11434/api/tags
-curl http://127.0.0.1:11434/api/chat -d '{"model":"gpt-4o:copilot","messages":[{"role":"user","content":"hello"}]}'
-```
-
-**Útil para:** `continue.dev`, `aider`, `open-webui`, agentes locais, scripts — consumir sua assinatura Copilot/Antigravity sem pagar por API keys separadas.
-
-### Nota
-
-Estes são projetos de reverse engineering independentes. Não têm dependência com `@thinkbrew/core` nem com o Produto 1. Estão no mesmo repositório por conveniência histórica.
-
----
 
 ## Começando
 
