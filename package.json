@@ -1,20 +1,20 @@
 {
-  "name": "thinkbrew",
+  "name": "anamnesic",
   "version": "1.0.0",
   "private": true,
-  "description": "ThinkBrew - AI context sync (MCP server + CLI) and editor-LLM bridges (Copilot/Antigravity as Ollama API)",
+  "description": "Anamnesic - AI context sync (MCP server + CLI) and editor-LLM bridges (Copilot/Antigravity as Ollama API)",
   "scripts": {
     "build": "pnpm -r build",
-    "build:core": "pnpm --filter @thinkbrew/core build",
-    "build:mcp": "pnpm --filter @thinkbrew/mcp-server build",
-    "build:cli": "pnpm --filter @thinkbrew/cli build",
-    "dev:core": "pnpm --filter @thinkbrew/core dev",
-    "dev:mcp": "pnpm --filter @thinkbrew/mcp-server dev",
-    "dev:cli": "pnpm --filter @thinkbrew/cli dev",
+    "build:core": "pnpm --filter @anamnesic/core build",
+    "build:mcp": "pnpm --filter @anamnesic/mcp-server build",
+    "build:cli": "pnpm --filter @anamnesic/cli build",
+    "dev:core": "pnpm --filter @anamnesic/core dev",
+    "dev:mcp": "pnpm --filter @anamnesic/mcp-server dev",
+    "dev:cli": "pnpm --filter @anamnesic/cli dev",
     "test": "node scripts/test-integration.js",
     "test:unit": "pnpm exec vitest run --coverage",
     "ci:install": "pnpm install --frozen-lockfile",
-    "ci:typecheck": "pnpm --filter @thinkbrew/core exec tsc --noEmit && pnpm --filter @thinkbrew/cli exec tsc --noEmit && pnpm --filter @thinkbrew/mcp-server exec tsc --noEmit"
+    "ci:typecheck": "pnpm --filter @anamnesic/core exec tsc --noEmit && pnpm --filter @anamnesic/cli exec tsc --noEmit && pnpm --filter @anamnesic/mcp-server exec tsc --noEmit"
   },
   "keywords": [
     "ai",
@@ -28,7 +28,7 @@
     "llm-bridge",
     "copilot"
   ],
-  "author": "ThinkBrew Team",
+  "author": "Anamnesic Team",
   "license": "MIT",
   "devDependencies": {
     "@vitest/coverage-v8": "^4.1.4",

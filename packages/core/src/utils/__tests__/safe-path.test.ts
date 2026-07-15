@@ -127,7 +127,7 @@ describe('safePath', () => {
     });
 
     it('should block null bytes in root', () => {
-      expect(() => safePath(testRoot + '\0.thinkbrew', 'file.txt')).toThrow('null byte');
+      expect(() => safePath(testRoot + '\0.anamnesic', 'file.txt')).toThrow('null byte');
     });
   });
 

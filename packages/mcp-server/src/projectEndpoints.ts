@@ -6,8 +6,8 @@ import {
     PipelineService,
     exportProject,
     getExportFilename,
-} from '@thinkbrew/core';
-import type { ExportFormat } from '@thinkbrew/core';
+} from '@anamnesic/core';
+import type { ExportFormat } from '@anamnesic/core';
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
@@ -37,7 +37,7 @@ export function registerProjectEndpoints(server: any) {
 
     server.tool(
         'list_projects',
-        'List all ThinkBrew projects.',
+        'List all Anamnesic projects.',
         {},
         async () => {
             const { projectService } = await services();
@@ -60,7 +60,7 @@ export function registerProjectEndpoints(server: any) {
 
     server.tool(
         'create_project',
-        'Create a new ThinkBrew project.',
+        'Create a new Anamnesic project.',
         {
             name: z.string().describe('Project name'),
             description: z.string().optional().describe('Project description'),
@@ -643,7 +643,7 @@ export function registerProjectEndpoints(server: any) {
             if (!fs.existsSync(absDir)) {
                 return { content: [{ type: 'text', text: `Directory not found: ${dirPath || '.'}` }] };
             }
-            const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target', '.thinkbrew']);
+            const IGNORE = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', 'coverage', '.cache', 'target', '.anamnesic']);
             const results: string[] = [];
             const limit = maxDepth ?? 3;
 

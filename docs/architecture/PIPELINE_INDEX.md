@@ -1,4 +1,4 @@
-# Índice de Serviços Fundacionais do Pipeline ThinkBrew
+# Índice de Serviços Fundacionais do Pipeline Anamnesic
 
 Este documento serve como referência rápida para localização e status dos serviços críticos de segurança e rastreabilidade do pipeline.
 
@@ -20,4 +20,4 @@ Este documento serve como referência rápida para localização e status dos se
 
 ---
 
-**Atualizado por Troubleshooter — ThinkBrew**
+**Atualizado por Troubleshooter — Anamnesic**

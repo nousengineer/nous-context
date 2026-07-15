@@ -1,5 +1,5 @@
 /**
- * Centralized file tools for ThinkBrew agents.
+ * Centralized file tools for Anamnesic agents.
  * All file operations go through these functions to ensure:
  * - Path safety (no traversal outside workspace)
  * - Snapshot integration (backup before writes/deletes)
@@ -29,7 +29,7 @@ const BINARY_EXTENSIONS = new Set([
 const IGNORE_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', '.next', '__pycache__',
   '.venv', 'venv', '.tox', 'coverage', '.nyc_output', '.cache',
-  'target', 'bin', 'obj', '.gradle', '.thinkbrew',
+  'target', 'bin', 'obj', '.gradle', '.anamnesic',
 ]);
 
 // ─── Tool Context ──────────────────────────────────────────────

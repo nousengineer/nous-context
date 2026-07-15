@@ -8,7 +8,7 @@ vi.mock('fs');
 vi.mock('os');
 
 describe('ChatService', () => {
-  const mockChatDir = '/home/user/.thinkbrew/chat';
+  const mockChatDir = '/home/user/.anamnesic/chat';
   const mockChatFile = path.join(mockChatDir, 'default.jsonl');
 
   beforeEach(() => {

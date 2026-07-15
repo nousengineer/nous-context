@@ -1,10 +1,10 @@
 {
-  "name": "@thinkbrew/cli",
+  "name": "@anamnesic/cli",
   "version": "1.0.0",
-  "description": "ThinkBrew CLI - Manage AI context from the terminal",
+  "description": "Anamnesic CLI - Manage AI context from the terminal",
   "main": "dist/index.js",
   "bin": {
-    "think": "dist/index.js"
+    "anamnesic": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
@@ -12,7 +12,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@thinkbrew/core": "workspace:*",
+    "@anamnesic/core": "workspace:*",
     "commander": "^12.0.0"
   },
   "devDependencies": {

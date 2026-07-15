@@ -32,7 +32,7 @@ describe('run-command', () => {
     if (fs.existsSync(workspaceDir)) {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
-    const logFile = path.join(os.homedir(), '.thinkbrew', 'logs', `${testPipelineId}.jsonl`);
+    const logFile = path.join(os.homedir(), '.anamnesic', 'logs', `${testPipelineId}.jsonl`);
     if (fs.existsSync(logFile)) {
       fs.unlinkSync(logFile);
     }

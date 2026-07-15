@@ -184,7 +184,7 @@ export function resolvePreset(mode: string): QualityPreset | string {
 // ─── Config file management ──────────────────────────────────
 
 function getConfigPath(): string {
-  return path.join(os.homedir(), '.thinkbrew', 'agent-config.json');
+  return path.join(os.homedir(), '.anamnesic', 'agent-config.json');
 }
 
 /** Load agent model configuration (creates default if missing) */
@@ -201,7 +201,7 @@ export function loadAgentConfig(): AgentModelConfig {
       };
     }
   } catch (err) {
-    console.error(`[ThinkBrew] Failed to load agent config: ${(err as Error).message}`);
+    console.error(`[Anamnesic] Failed to load agent config: ${(err as Error).message}`);
   }
   // Return default — cafe-soluvel (gratuito, zero credenciais necessarias) para nao gastar sem querer
   return applyQualityPreset('free-tier');
@@ -319,7 +319,7 @@ export interface ModelFailureHistory {
 }
 
 function getFailureHistoryPath(): string {
-  return path.join(os.homedir(), '.thinkbrew', 'model-failures.json');
+  return path.join(os.homedir(), '.anamnesic', 'model-failures.json');
 }
 
 /** Load model failure history */
@@ -393,7 +393,7 @@ const DEFAULT_OLLAMA_CONFIG: OllamaConfig = {
 };
 
 function getOllamaConfigPath(): string {
-  return path.join(os.homedir(), '.thinkbrew', 'ollama-config.json');
+  return path.join(os.homedir(), '.anamnesic', 'ollama-config.json');
 }
 
 /** Load Ollama configuration */

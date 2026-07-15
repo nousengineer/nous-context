@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="logo.svg" alt="ThinkBrew logo" width="160"/>
+  <img src="logo.svg" alt="Anamnesic logo" width="160"/>
 </p>
 
-# ThinkBrew
+# Anamnesic
 
 Sincronize conhecimento do projeto com suas ferramentas de IA.
 
@@ -14,12 +14,12 @@ Manter esses arquivos manualmente é repetitivo e eles ficam desatualizados.
 
 ### A Solução
 
-ThinkBrew unifica a gestão de contexto e exporta automaticamente para os formatos que suas ferramentas entendem:
+Anamnesic unifica a gestão de contexto e exporta automaticamente para os formatos que suas ferramentas entendem:
 
 ```
                    ┌────────────────┐
   ┌───────────┐    │                │────→ .cursorrules
-  │ Contexto  │    │   ThinkBrew    │────→ CLAUDE.md
+  │ Contexto  │    │   Anamnesic    │────→ CLAUDE.md
   │ (SQLite)  │───→│   (export)     │────→ copilot-instructions.md
   │ Decisões  │    │                │────→ AGENTS.md
   │ Projetos  │    │                │────→ custom (json, markdown, plain)
@@ -30,14 +30,14 @@ ThinkBrew unifica a gestão de contexto e exporta automaticamente para os format
 
 | Pacote | Descrição | Bin |
 |---|---|---|
-| `@thinkbrew/core` | Lógica de negócio (entidades, serviços, export, validação, pipeline, file tools) | — |
-| `@thinkbrew/mcp-server` | Servidor MCP stdio com 41 tools (context CRUD, file ops, chat, sync, export, pipeline) | `thinkbrew-mcp` |
-| `@thinkbrew/cli` | CLI para gerenciar projetos, contexto, decisões e export | `think` |
+| `@anamnesic/core` | Lógica de negócio (entidades, serviços, export, validação, pipeline, file tools) | — |
+| `@anamnesic/mcp-server` | Servidor MCP stdio com 41 tools (context CRUD, file ops, chat, sync, export, pipeline) | `anamnesic-mcp` |
+| `@anamnesic/cli` | CLI para gerenciar projetos, contexto, decisões e export | `think` |
 
 ### Comandos CLI
 
 ```
-think init                          # Inicializa o ThinkBrew no diretório
+think init                          # Inicializa o Anamnesic no diretório
 think project list                  # Lista projetos
 think project create <nome>         # Cria um projeto
 think context add <projeto> <cv>    # Adiciona contexto chave/valor
@@ -54,7 +54,7 @@ Conecte qualquer cliente MCP (Claude Desktop, Cursor, VS Code via extensão MCP)
 ```json
 {
   "mcpServers": {
-    "thinkbrew": {
+    "anamnesic": {
       "command": "node",
       "args": ["packages/mcp-server/dist/index.js"]
     }
@@ -73,9 +73,9 @@ Exporta contexto e decisões do projeto para arquivos que as ferramentas de IA l
 | `cursor` | `.cursorrules` | Cursor |
 | `claude` | `CLAUDE.md` | Claude Code / Claude Desktop |
 | `copilot` | `.github/copilot-instructions.md` | GitHub Copilot |
-| `json` | `thinkbrew-export.json` | Genérico |
-| `markdown` | `thinkbrew-export.md` | Leitura humana |
-| `plain` | `thinkbrew-export.txt` | Genérico |
+| `json` | `anamnesic-export.json` | Genérico |
+| `markdown` | `anamnesic-export.md` | Leitura humana |
+| `plain` | `anamnesic-export.txt` | Genérico |
 
 ### Stack
 
@@ -107,4 +107,4 @@ pnpm test:unit
 
 ## Licença
 
-MIT &copy; 2026 ThinkBrew Team
+MIT &copy; 2026 Anamnesic Team

@@ -43,12 +43,12 @@ describe('File Tools', () => {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
     // Clean up snapshots
-    const snapshotsDir = path.join(os.homedir(), '.thinkbrew', 'snapshots', testPipelineId);
+    const snapshotsDir = path.join(os.homedir(), '.anamnesic', 'snapshots', testPipelineId);
     if (fs.existsSync(snapshotsDir)) {
       fs.rmSync(snapshotsDir, { recursive: true, force: true });
     }
     // Clean up logs
-    const logFile = path.join(os.homedir(), '.thinkbrew', 'logs', `${testPipelineId}.jsonl`);
+    const logFile = path.join(os.homedir(), '.anamnesic', 'logs', `${testPipelineId}.jsonl`);
     if (fs.existsSync(logFile)) {
       fs.unlinkSync(logFile);
     }

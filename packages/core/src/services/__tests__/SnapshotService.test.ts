@@ -19,7 +19,7 @@ describe('SnapshotService', () => {
     if (fs.existsSync(workspaceDir)) {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
-    const snapshotsDir = path.join(os.homedir(), '.thinkbrew', 'snapshots', testPipelineId);
+    const snapshotsDir = path.join(os.homedir(), '.anamnesic', 'snapshots', testPipelineId);
     if (fs.existsSync(snapshotsDir)) {
       fs.rmSync(snapshotsDir, { recursive: true, force: true });
     }
@@ -242,7 +242,7 @@ describe('SnapshotService', () => {
       // Manually set old timestamp in metadata
       const metadataPath = path.join(
         os.homedir(),
-        '.thinkbrew',
+        '.anamnesic',
         'snapshots',
         testPipelineId,
         '0',
@@ -271,7 +271,7 @@ describe('SnapshotService', () => {
       // Make it old
       const metadataPath = path.join(
         os.homedir(),
-        '.thinkbrew',
+        '.anamnesic',
         'snapshots',
         testPipelineId,
         '0',
@@ -301,7 +301,7 @@ describe('SnapshotService', () => {
       // Make it old
       const metadataPath = path.join(
         os.homedir(),
-        '.thinkbrew',
+        '.anamnesic',
         'snapshots',
         testPipelineId,
         '0',
@@ -321,7 +321,7 @@ describe('SnapshotService', () => {
     it('should return correct files directory path', () => {
       const filesDir = service.getSnapshotFilesDir(testPipelineId, 0);
 
-      expect(filesDir).toContain('.thinkbrew');
+      expect(filesDir).toContain('.anamnesic');
       expect(filesDir).toContain('snapshots');
       expect(filesDir).toContain(testPipelineId);
       expect(filesDir).toContain('0');
@@ -339,7 +339,7 @@ describe('SnapshotService', () => {
       // Corrupt the metadata file
       const metadataPath = path.join(
         os.homedir(),
-        '.thinkbrew',
+        '.anamnesic',
         'snapshots',
         testPipelineId,
         '0',

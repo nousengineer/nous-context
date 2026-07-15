@@ -1,4 +1,4 @@
-# @thinkbrew/core
+# @anamnesic/core
 
 Shared library with entities, services, database, validation, and export logic. Used by all other packages.
 
@@ -18,7 +18,7 @@ import {
   ContextService,
   DecisionService,
   ApiKeyService,
-} from "@thinkbrew/core";
+} from "@anamnesic/core";
 
 const db = await getDatabase();
 const projects = new ProjectService(db);
@@ -44,13 +44,13 @@ await decisions.create({
 const results = await contexts.search(project.id, "react");
 
 // Export
-import { exportProject } from "@thinkbrew/core";
+import { exportProject } from "@anamnesic/core";
 const markdown = exportProject(project, "copilot"); // -> .github/copilot-instructions.md content
 ```
 
 ## Database
 
-SQLite stored at `~/.thinkbrew/data.sqlite` by default. Configurable:
+SQLite stored at `~/.anamnesic/data.sqlite` by default. Configurable:
 
 ```typescript
 const db = await getDatabase({

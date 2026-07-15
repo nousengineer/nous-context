@@ -1,4 +1,4 @@
-# ThinkBrew — Diagnóstico Final Troubleshooter
+# Anamnesic — Diagnóstico Final Troubleshooter
 
 ## Diagnóstico
 
@@ -90,4 +90,4 @@ Após análise do feedback do PM e da estrutura do workspace, identifiquei os se
 
 ---
 
-**Troubleshooter — ThinkBrew**
+**Troubleshooter — Anamnesic**

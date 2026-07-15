@@ -1,5 +1,5 @@
 /**
- * ThinkBrew Core Package
+ * Anamnesic Core Package
  * 
  * Re-exports de todos os modulos para backward compatibility.
  */
@@ -59,7 +59,7 @@ export {
 
 export {
   type AgentSettings,
-  type ThinkBrewConfig,
+  type AnamnesicConfig,
   DEFAULT_AGENT_SETTINGS,
   CONFIG_VERSION,
 } from './agents/config';

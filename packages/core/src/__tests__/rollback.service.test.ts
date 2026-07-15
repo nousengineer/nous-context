@@ -12,8 +12,8 @@ describe('RollbackService', () => {
   let rollbackService: RollbackService;
 
   beforeEach(async () => {
-    snapshotsDir = path.join(os.tmpdir(), `thinkbrew-snapshots-${Date.now()}`);
-    workspaceDir = path.join(os.tmpdir(), `thinkbrew-workspace-${Date.now()}`);
+    snapshotsDir = path.join(os.tmpdir(), `anamnesic-snapshots-${Date.now()}`);
+    workspaceDir = path.join(os.tmpdir(), `anamnesic-workspace-${Date.now()}`);
 
     await fs.mkdir(snapshotsDir, { recursive: true });
     await fs.mkdir(workspaceDir, { recursive: true });

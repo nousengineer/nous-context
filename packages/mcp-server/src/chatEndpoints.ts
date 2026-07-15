@@ -1,4 +1,4 @@
-import { ChatService } from '@thinkbrew/core';
+import { ChatService } from '@anamnesic/core';
 import { z } from 'zod';
 import { execSync } from 'child_process';
 

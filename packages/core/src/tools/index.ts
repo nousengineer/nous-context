@@ -1,5 +1,5 @@
 /**
- * Core tools for ThinkBrew agents.
+ * Core tools for Anamnesic agents.
  * Centralized, safe, and logged file/command operations.
  */
 

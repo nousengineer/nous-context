@@ -1,4 +1,4 @@
-import { getDatabase, ProjectService, ContextService, DecisionService } from '@thinkbrew/core';
+import { getDatabase, ProjectService, ContextService, DecisionService } from '@anamnesic/core';
 
 let _db: Awaited<ReturnType<typeof getDatabase>> | null = null;
 

@@ -11,7 +11,7 @@ const program = new Command();
 
 program
   .name('think')
-  .description('ThinkBrew CLI - Manage AI context from the terminal')
+  .description('Anamnesic CLI - Manage AI context from the terminal')
   .version('1.0.0');
 
 registerProjectCommands(program);

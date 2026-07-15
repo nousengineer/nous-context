@@ -1,7 +1,7 @@
 {
-  "name": "@thinkbrew/core",
+  "name": "@anamnesic/core",
   "version": "1.0.0",
-  "description": "Core library for ThinkBrew - entities, services, and business logic",
+  "description": "Core library for Anamnesic - entities, services, and business logic",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

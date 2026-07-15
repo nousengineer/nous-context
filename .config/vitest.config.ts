@@ -28,7 +28,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@thinkbrew/core': path.resolve(__dirname, './packages/core/src'),
+      '@anamnesic/core': path.resolve(__dirname, './packages/core/src'),
     },
   },
 });

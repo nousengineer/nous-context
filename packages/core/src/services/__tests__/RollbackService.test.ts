@@ -21,11 +21,11 @@ describe('RollbackService', () => {
     if (fs.existsSync(workspaceDir)) {
       fs.rmSync(workspaceDir, { recursive: true, force: true });
     }
-    const snapshotsDir = path.join(os.homedir(), '.thinkbrew', 'snapshots', testPipelineId);
+    const snapshotsDir = path.join(os.homedir(), '.anamnesic', 'snapshots', testPipelineId);
     if (fs.existsSync(snapshotsDir)) {
       fs.rmSync(snapshotsDir, { recursive: true, force: true });
     }
-    const logsDir = path.join(os.homedir(), '.thinkbrew', 'logs');
+    const logsDir = path.join(os.homedir(), '.anamnesic', 'logs');
     const logFile = path.join(logsDir, `${testPipelineId}.jsonl`);
     if (fs.existsSync(logFile)) {
       fs.unlinkSync(logFile);

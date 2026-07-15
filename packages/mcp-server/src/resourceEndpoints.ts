@@ -3,17 +3,17 @@
  *
  * Resources allow AI assistants to discover and read project context
  * without needing to call tools. This gives AIs a "file-system-like"
- * view of all ThinkBrew data.
+ * view of all Anamnesic data.
  *
  * Static resources:
- *   thinkbrew://projects          — List all projects
- *   thinkbrew://agent-config      — Agent roles and quality tiers
+ *   anamnesic://projects          — List all projects
+ *   anamnesic://agent-config      — Agent roles and quality tiers
  *
  * Dynamic resources (templates):
- *   thinkbrew://project/{id}/summary     — Full project summary
- *   thinkbrew://project/{id}/context     — All context entries
- *   thinkbrew://project/{id}/decisions   — All architectural decisions
- *   thinkbrew://project/{id}/pipelines   — All pipelines
+ *   anamnesic://project/{id}/summary     — Full project summary
+ *   anamnesic://project/{id}/context     — All context entries
+ *   anamnesic://project/{id}/decisions   — All architectural decisions
+ *   anamnesic://project/{id}/pipelines   — All pipelines
  */
 
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -26,7 +26,7 @@ import {
     exportProject,
     QUALITY_PRESETS,
     AGENT_META,
-} from '@thinkbrew/core';
+} from '@anamnesic/core';
 
 let _projectService: ProjectService | null = null;
 let _contextService: ContextService | null = null;
@@ -55,8 +55,8 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'projects',
-        'thinkbrew://projects',
-        { description: 'List of all ThinkBrew projects with IDs, names, and status.' },
+        'anamnesic://projects',
+        { description: 'List of all Anamnesic projects with IDs, names, and status.' },
         async () => {
             const { projectService } = await services();
             const projects = await projectService.list();
@@ -70,7 +70,7 @@ export function registerResourceEndpoints(server: any) {
             }));
             return {
                 contents: [{
-                    uri: 'thinkbrew://projects',
+                    uri: 'anamnesic://projects',
                     mimeType: 'application/json',
                     text: JSON.stringify(summary, null, 2),
                 }],
@@ -84,7 +84,7 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'agent-config',
-        'thinkbrew://agent-config',
+        'anamnesic://agent-config',
         { description: 'Available AI agent roles, quality tiers, and model assignments.' },
         async () => {
             const config = {
@@ -100,7 +100,7 @@ export function registerResourceEndpoints(server: any) {
             };
             return {
                 contents: [{
-                    uri: 'thinkbrew://agent-config',
+                    uri: 'anamnesic://agent-config',
                     mimeType: 'application/json',
                     text: JSON.stringify(config, null, 2),
                 }],
@@ -114,13 +114,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-summary',
-        new ResourceTemplate('thinkbrew://project/{id}/summary', {
+        new ResourceTemplate('anamnesic://project/{id}/summary', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkbrew://project/${p.id}/summary`,
+                        uri: `anamnesic://project/${p.id}/summary`,
                         name: `${p.name} — Summary`,
                         description: `Full summary of project "${p.name}" including context, decisions, and pipelines.`,
                     })),
@@ -187,13 +187,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-context',
-        new ResourceTemplate('thinkbrew://project/{id}/context', {
+        new ResourceTemplate('anamnesic://project/{id}/context', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkbrew://project/${p.id}/context`,
+                        uri: `anamnesic://project/${p.id}/context`,
                         name: `${p.name} — Context`,
                         description: `All context entries for project "${p.name}".`,
                     })),
@@ -234,13 +234,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-decisions',
-        new ResourceTemplate('thinkbrew://project/{id}/decisions', {
+        new ResourceTemplate('anamnesic://project/{id}/decisions', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkbrew://project/${p.id}/decisions`,
+                        uri: `anamnesic://project/${p.id}/decisions`,
                         name: `${p.name} — Decisions`,
                         description: `Architectural Decision Records for project "${p.name}".`,
                     })),
@@ -279,13 +279,13 @@ export function registerResourceEndpoints(server: any) {
 
     server.resource(
         'project-pipelines',
-        new ResourceTemplate('thinkbrew://project/{id}/pipelines', {
+        new ResourceTemplate('anamnesic://project/{id}/pipelines', {
             list: async () => {
                 const { projectService } = await services();
                 const projects = await projectService.list();
                 return {
                     resources: projects.map((p: any) => ({
-                        uri: `thinkbrew://project/${p.id}/pipelines`,
+                        uri: `anamnesic://project/${p.id}/pipelines`,
                         name: `${p.name} — Pipelines`,
                         description: `Task pipelines for project "${p.name}".`,
                     })),

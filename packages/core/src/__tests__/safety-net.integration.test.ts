@@ -19,9 +19,9 @@ describe('Safety Net Integration', () => {
   let rollbackService: RollbackService;
 
   beforeEach(async () => {
-    logsDir = path.join(os.tmpdir(), `thinkbrew-logs-${Date.now()}`);
-    snapshotsDir = path.join(os.tmpdir(), `thinkbrew-snapshots-${Date.now()}`);
-    workspaceDir = path.join(os.tmpdir(), `thinkbrew-workspace-${Date.now()}`);
+    logsDir = path.join(os.tmpdir(), `anamnesic-logs-${Date.now()}`);
+    snapshotsDir = path.join(os.tmpdir(), `anamnesic-snapshots-${Date.now()}`);
+    workspaceDir = path.join(os.tmpdir(), `anamnesic-workspace-${Date.now()}`);
 
     await fs.mkdir(logsDir, { recursive: true });
     await fs.mkdir(snapshotsDir, { recursive: true });

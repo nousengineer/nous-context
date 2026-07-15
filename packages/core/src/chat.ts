@@ -22,7 +22,7 @@ export interface ChatMessage {
 }
 
 function getChatDir(): string {
-  const dir = path.join(os.homedir(), '.thinkbrew', 'chat');
+  const dir = path.join(os.homedir(), '.anamnesic', 'chat');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -77,7 +77,7 @@ export class ChatService {
       try {
         msgs.push(JSON.parse(l) as ChatMessage);
       } catch (err) {
-        console.error(`[ThinkBrew] Chat line ${i + 1} parse error: ${(err as Error).message} — content: ${l.substring(0, 80)}`);
+        console.error(`[Anamnesic] Chat line ${i + 1} parse error: ${(err as Error).message} — content: ${l.substring(0, 80)}`);
       }
     });
     return limit ? msgs.slice(-limit) : msgs;

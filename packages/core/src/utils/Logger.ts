@@ -1,5 +1,5 @@
 /**
- * Simple logger utility for ThinkBrew Core
+ * Simple logger utility for Anamnesic Core
  */
 
 export enum LogLevel {

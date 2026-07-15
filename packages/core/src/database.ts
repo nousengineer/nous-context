@@ -23,7 +23,7 @@ import { OrchestratorPlanRecord } from './entities/OrchestratorPlan';
 import { OrchestratorRunRecord } from './entities/OrchestratorRun';
 import { PolicyDecisionAudit } from './entities/PolicyDecisionAudit';
 
-const DATA_DIR = process.env.THINKBREW_DATA_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.thinkbrew');
+const DATA_DIR = process.env.ANAMNESIC_DATA_DIR || path.join(process.env.HOME || process.env.USERPROFILE || '.', '.anamnesic');
 const DB_PATH = path.join(DATA_DIR, 'data.sqlite');
 
 // Ensure data directory exists
@@ -61,7 +61,7 @@ export const getDatabase = async (): Promise<DataSource> => {
       PolicyDecisionAudit,
     ],
     synchronize: process.env.NODE_ENV !== 'production',
-    logging: process.env.THINKBREW_DB_LOGGING === 'true',
+    logging: process.env.ANAMNESIC_DB_LOGGING === 'true',
   });
 
   if (!dataSource.isInitialized) {
