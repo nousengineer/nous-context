@@ -1,6 +1,14 @@
 import { DataSource, Like } from 'typeorm';
 import { ContextEntry } from '../entities/ContextEntry';
 import { Project } from '../entities/Project';
+import { 
+  reportContextEntryCreated, 
+  reportContextEntryDeleted,
+  reportBulkContextEntriesCreated,
+  reportBulkContextEntriesDeleted,
+  validateApiKeyAndCheckQuota,
+  type UsageReport
+} from './UsageMeteringService';
 
 export class ContextService {
   private repo;
@@ -44,6 +52,15 @@ export class ContextService {
     priority?: number;
     metadata?: Record<string, any> | null;
   }) {
+    // Check quota if SaaS is configured
+    const quota = await validateApiKeyAndCheckQuota();
+    if (quota && quota.usage.remaining <= 0) {
+      throw new Error(
+        `Context entry quota exceeded. You have ${quota.usage.contextEntries} entries ` +
+        `out of ${quota.usage.contextEntriesLimit} allowed. Please upgrade your plan.`
+      );
+    }
+
     const project = await this.projectRepo.findOne({ where: { id: input.projectId } });
     if (!project) throw new Error(`Project not found: ${input.projectId}`);
 
@@ -55,7 +72,12 @@ export class ContextService {
       metadata: input.metadata || undefined,
       project,
     });
-    return this.repo.save(entry);
+    const saved = await this.repo.save(entry);
+    
+    // Report usage to SaaS if configured
+    reportContextEntryCreated(input.projectId).catch(() => {});
+    
+    return saved;
   }
 
   async update(id: string, input: {
@@ -75,6 +97,10 @@ export class ContextService {
     const entry = await this.get(id);
     if (!entry) throw new Error(`Context entry not found: ${id}`);
     await this.repo.remove(entry);
+    
+    // Report usage to SaaS if configured
+    reportContextEntryDeleted(entry.project.id).catch(() => {});
+    
     return true;
   }
 }
